@@ -1,22 +1,33 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
-  version: 0.1.0
-  description: API specification
+  version: 1.0.0
+  description: Network Performance Management Enterprise API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: nodes
+    description: Network node management
+  - name: metrics
+    description: Time-series metrics
+  - name: topology
+    description: Network topology
+  - name: flows
+    description: NetFlow traffic analysis
+  - name: alerts
+    description: Alert management
+  - name: poller
+    description: Poller control
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +35,371 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /nodes:
+    get:
+      operationId: listNodes
+      tags: [nodes]
+      summary: List all monitored nodes
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [up, down, warning, unknown]
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [router, switch, firewall, server, unknown]
+        - name: limit
+          in: query
+          schema:
+            type: number
+        - name: offset
+          in: query
+          schema:
+            type: number
+      responses:
+        "200":
+          description: List of nodes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeListResponse"
+
+    post:
+      operationId: createNode
+      tags: [nodes]
+      summary: Add a new node for monitoring
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateNodeRequest"
+      responses:
+        "201":
+          description: Node created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Node"
+
+  /nodes/{nodeId}:
+    get:
+      operationId: getNode
+      tags: [nodes]
+      summary: Get node details
+      parameters:
+        - name: nodeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Node details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Node"
+        "404":
+          description: Node not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      operationId: deleteNode
+      tags: [nodes]
+      summary: Remove a node from monitoring
+      parameters:
+        - name: nodeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Node deleted
+
+  /nodes/stats/summary:
+    get:
+      operationId: getNodesSummary
+      tags: [nodes]
+      summary: Get summary statistics for all nodes
+      responses:
+        "200":
+          description: Node summary stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodesSummary"
+
+  /metrics/{nodeId}:
+    get:
+      operationId: getNodeMetrics
+      tags: [metrics]
+      summary: Get time-series metrics for a node
+      parameters:
+        - name: nodeId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: metric
+          in: query
+          schema:
+            type: string
+            enum: [cpu, memory, interface_in, interface_out, latency, packet_loss]
+        - name: from
+          in: query
+          schema:
+            type: string
+        - name: to
+          in: query
+          schema:
+            type: string
+        - name: bucket
+          in: query
+          schema:
+            type: string
+            enum: [1m, 5m, 1h, 1d]
+      responses:
+        "200":
+          description: Metrics data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MetricsResponse"
+
+  /metrics/top-n:
+    get:
+      operationId: getTopNMetrics
+      tags: [metrics]
+      summary: Get top-N nodes by a given metric
+      parameters:
+        - name: metric
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [cpu, memory, interface_in, interface_out, latency, packet_loss]
+        - name: n
+          in: query
+          schema:
+            type: number
+        - name: from
+          in: query
+          schema:
+            type: string
+        - name: to
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Top-N nodes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TopNResponse"
+
+  /topology:
+    get:
+      operationId: getTopology
+      tags: [topology]
+      summary: Get full network topology
+      responses:
+        "200":
+          description: Network topology graph
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TopologyResponse"
+
+  /topology/netpath/{nodeId}:
+    get:
+      operationId: getNetPath
+      tags: [topology]
+      summary: Get NetPath traceroute data for a node
+      parameters:
+        - name: nodeId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: target
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: NetPath traceroute hops
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NetPathResponse"
+
+  /flows:
+    get:
+      operationId: listFlows
+      tags: [flows]
+      summary: Get NetFlow/IPFIX traffic data
+      parameters:
+        - name: nodeId
+          in: query
+          schema:
+            type: string
+        - name: from
+          in: query
+          schema:
+            type: string
+        - name: to
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: number
+      responses:
+        "200":
+          description: Flow records
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FlowsResponse"
+
+  /flows/top-talkers:
+    get:
+      operationId: getTopTalkers
+      tags: [flows]
+      summary: Get top traffic sources/destinations
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+        - name: to
+          in: query
+          schema:
+            type: string
+        - name: n
+          in: query
+          schema:
+            type: number
+      responses:
+        "200":
+          description: Top talkers
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TopTalkersResponse"
+
+  /alerts:
+    get:
+      operationId: listAlerts
+      tags: [alerts]
+      summary: List active alerts
+      parameters:
+        - name: severity
+          in: query
+          schema:
+            type: string
+            enum: [critical, warning, info]
+        - name: nodeId
+          in: query
+          schema:
+            type: string
+        - name: acknowledged
+          in: query
+          schema:
+            type: boolean
+        - name: limit
+          in: query
+          schema:
+            type: number
+      responses:
+        "200":
+          description: Alert list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertListResponse"
+
+  /alerts/{alertId}/acknowledge:
+    post:
+      operationId: acknowledgeAlert
+      tags: [alerts]
+      summary: Acknowledge an alert
+      parameters:
+        - name: alertId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Alert acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Alert"
+
+  /poller/status:
+    get:
+      operationId: getPollerStatus
+      tags: [poller]
+      summary: Get poller engine status
+      responses:
+        "200":
+          description: Poller status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PollerStatus"
+
+  /poller/trigger:
+    post:
+      operationId: triggerPoll
+      tags: [poller]
+      summary: Manually trigger a poll cycle
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TriggerPollRequest"
+      responses:
+        "200":
+          description: Poll triggered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TriggerPollResponse"
+
+  /discovery/scan:
+    post:
+      operationId: triggerDiscovery
+      tags: [nodes]
+      summary: Trigger network discovery scan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DiscoveryScanRequest"
+      responses:
+        "202":
+          description: Discovery scan started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiscoveryScanResponse"
+
 components:
   schemas:
     HealthStatus:
@@ -31,6 +407,407 @@ components:
       properties:
         status:
           type: string
-      required:
-        - status
+        version:
+          type: string
+        uptime:
+          type: number
+      required: [status]
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+      required: [error]
+
+    Node:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        ipAddress:
+          type: string
+        type:
+          type: string
+          enum: [router, switch, firewall, server, unknown]
+        status:
+          type: string
+          enum: [up, down, warning, unknown]
+        vendor:
+          type: string
+        model:
+          type: string
+        location:
+          type: string
+        sysDescription:
+          type: string
+        uptime:
+          type: number
+        cpuUsage:
+          type: number
+        memUsage:
+          type: number
+        interfaceCount:
+          type: number
+        lastPolled:
+          type: string
+        createdAt:
+          type: string
+      required: [id, name, ipAddress, type, status]
+
+    CreateNodeRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        ipAddress:
+          type: string
+        type:
+          type: string
+          enum: [router, switch, firewall, server, unknown]
+        snmpVersion:
+          type: string
+          enum: [v1, v2c, v3]
+        snmpCommunity:
+          type: string
+        location:
+          type: string
+        vendor:
+          type: string
+      required: [name, ipAddress, type]
+
+    NodeListResponse:
+      type: object
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Node"
+        total:
+          type: number
+        limit:
+          type: number
+        offset:
+          type: number
+      required: [nodes, total]
+
+    NodesSummary:
+      type: object
+      properties:
+        total:
+          type: number
+        up:
+          type: number
+        down:
+          type: number
+        warning:
+          type: number
+        unknown:
+          type: number
+        avgCpu:
+          type: number
+        avgMemory:
+          type: number
+        criticalAlerts:
+          type: number
+        warningAlerts:
+          type: number
+      required: [total, up, down, warning, unknown, avgCpu, avgMemory, criticalAlerts, warningAlerts]
+
+    MetricPoint:
+      type: object
+      properties:
+        timestamp:
+          type: string
+        value:
+          type: number
+        min:
+          type: number
+        max:
+          type: number
+        avg:
+          type: number
+      required: [timestamp, value]
+
+    MetricsResponse:
+      type: object
+      properties:
+        nodeId:
+          type: string
+        metric:
+          type: string
+        bucket:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetricPoint"
+      required: [nodeId, metric, data]
+
+    TopNItem:
+      type: object
+      properties:
+        nodeId:
+          type: string
+        nodeName:
+          type: string
+        ipAddress:
+          type: string
+        value:
+          type: number
+        metric:
+          type: string
+      required: [nodeId, nodeName, ipAddress, value, metric]
+
+    TopNResponse:
+      type: object
+      properties:
+        metric:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TopNItem"
+      required: [metric, items]
+
+    TopologyEdge:
+      type: object
+      properties:
+        id:
+          type: string
+        sourceId:
+          type: string
+        targetId:
+          type: string
+        protocol:
+          type: string
+          enum: [lldp, cdp, arp, manual]
+        localInterface:
+          type: string
+        remoteInterface:
+          type: string
+        linkSpeed:
+          type: number
+        utilization:
+          type: number
+      required: [id, sourceId, targetId, protocol]
+
+    TopologyResponse:
+      type: object
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Node"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/TopologyEdge"
+        lastUpdated:
+          type: string
+      required: [nodes, edges]
+
+    HopData:
+      type: object
+      properties:
+        hop:
+          type: number
+        ipAddress:
+          type: string
+        hostname:
+          type: string
+        avgLatency:
+          type: number
+        minLatency:
+          type: number
+        maxLatency:
+          type: number
+        packetLoss:
+          type: number
+        nodeId:
+          type: string
+      required: [hop, ipAddress, avgLatency, minLatency, maxLatency, packetLoss]
+
+    NetPathResponse:
+      type: object
+      properties:
+        sourceNodeId:
+          type: string
+        target:
+          type: string
+        hops:
+          type: array
+          items:
+            $ref: "#/components/schemas/HopData"
+        totalLatency:
+          type: number
+        timestamp:
+          type: string
+      required: [sourceNodeId, target, hops, totalLatency]
+
+    FlowRecord:
+      type: object
+      properties:
+        id:
+          type: string
+        nodeId:
+          type: string
+        srcIp:
+          type: string
+        dstIp:
+          type: string
+        srcPort:
+          type: number
+        dstPort:
+          type: number
+        protocol:
+          type: number
+        bytes:
+          type: number
+        packets:
+          type: number
+        timestamp:
+          type: string
+      required: [id, nodeId, srcIp, dstIp, bytes, packets, timestamp]
+
+    FlowsResponse:
+      type: object
+      properties:
+        flows:
+          type: array
+          items:
+            $ref: "#/components/schemas/FlowRecord"
+        total:
+          type: number
+      required: [flows, total]
+
+    TopTalker:
+      type: object
+      properties:
+        ip:
+          type: string
+        hostname:
+          type: string
+        totalBytes:
+          type: number
+        totalPackets:
+          type: number
+        direction:
+          type: string
+          enum: [source, destination]
+      required: [ip, totalBytes, totalPackets, direction]
+
+    TopTalkersResponse:
+      type: object
+      properties:
+        talkers:
+          type: array
+          items:
+            $ref: "#/components/schemas/TopTalker"
+        from:
+          type: string
+        to:
+          type: string
+      required: [talkers]
+
+    Alert:
+      type: object
+      properties:
+        id:
+          type: string
+        nodeId:
+          type: string
+        nodeName:
+          type: string
+        severity:
+          type: string
+          enum: [critical, warning, info]
+        type:
+          type: string
+        message:
+          type: string
+        acknowledged:
+          type: boolean
+        createdAt:
+          type: string
+        acknowledgedAt:
+          type: string
+      required: [id, nodeId, nodeName, severity, type, message, acknowledged, createdAt]
+
+    AlertListResponse:
+      type: object
+      properties:
+        alerts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Alert"
+        total:
+          type: number
+      required: [alerts, total]
+
+    PollerStatus:
+      type: object
+      properties:
+        running:
+          type: boolean
+        activeWorkers:
+          type: number
+        pollsPerSecond:
+          type: number
+        totalPolled:
+          type: number
+        successRate:
+          type: number
+        lastCycleMs:
+          type: number
+        queueDepth:
+          type: number
+      required: [running, activeWorkers, pollsPerSecond, totalPolled, successRate, lastCycleMs, queueDepth]
+
+    TriggerPollRequest:
+      type: object
+      properties:
+        nodeIds:
+          type: array
+          items:
+            type: string
+        allNodes:
+          type: boolean
+
+    TriggerPollResponse:
+      type: object
+      properties:
+        triggered:
+          type: number
+        message:
+          type: string
+      required: [triggered, message]
+
+    DiscoveryScanRequest:
+      type: object
+      properties:
+        subnet:
+          type: string
+        snmpCommunity:
+          type: string
+        snmpVersion:
+          type: string
+          enum: [v1, v2c, v3]
+      required: [subnet]
+
+    DiscoveryScanResponse:
+      type: object
+      properties:
+        scanId:
+          type: string
+        subnet:
+          type: string
+        status:
+          type: string
+        message:
+          type: string
+      required: [scanId, subnet, status, message]

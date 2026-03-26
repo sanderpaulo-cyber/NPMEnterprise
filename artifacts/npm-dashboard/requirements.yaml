@@ -1,0 +1,17 @@
+packages:
+  "recharts": "For time-series metrics, NetPath, and flow charts"
+  "@xyflow/react": "For interactive network topology graph rendering"
+  "date-fns": "For human-readable date and time formatting"
+  "framer-motion": "For page transitions and interactive micro-animations"
+  "clsx": "For conditional class name merging"
+  "tailwind-merge": "For merging Tailwind classes in custom components"
+
+images:
+  - path: "artifacts/npm-dashboard/public/images/auth-bg.png"
+    description: "Abstract dark enterprise network data visualization background with glowing neon blue and emerald green nodes connected by thin laser lines, dark navy background, subtle depth of field"
+    aspect_ratio: "16:9"
+
+notes:
+  - Expecting WebSocket at ws://[host]/api/ws for real-time updates.
+  - Relying on @workspace/api-client-react for all TanStack Query hooks.
+  - Assuming standard shadcn-ui components exist in src/components/ui/ (Card, Button, Badge, Table, etc.) as listed in the directory structure.
