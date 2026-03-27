@@ -1,0 +1,145 @@
+export interface NetworkScope {
+  id: string;
+  name: string;
+  cidr: string;
+  site?: string | null;
+  description?: string | null;
+  enabled: boolean;
+  priority: number;
+  defaultCredentialId?: string | null;
+  lastRunAt?: string | null;
+  createdAt: string;
+}
+
+export interface SnmpCredential {
+  id: string;
+  name: string;
+  version: "v1" | "v2c" | "v3";
+  community?: string | null;
+  username?: string | null;
+  authProtocol:
+    | "none"
+    | "md5"
+    | "sha"
+    | "sha224"
+    | "sha256"
+    | "sha384"
+    | "sha512";
+  authPassword?: string | null;
+  privProtocol: "none" | "des" | "aes";
+  privPassword?: string | null;
+  port: number;
+  timeoutMs: number;
+  retries: number;
+  enabled: boolean;
+  createdAt: string;
+}
+
+export interface DiscoveryRun {
+  id: string;
+  scopeId?: string | null;
+  scopeName?: string | null;
+  cidr: string;
+  credentialId?: string | null;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  hostsTotal: number;
+  hostsScanned: number;
+  hostsResponsive: number;
+  hostsDiscovered: number;
+  errorsCount: number;
+  message?: string | null;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  createdAt: string;
+}
+
+async function apiFetch<T>(input: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(input, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `HTTP ${response.status}`);
+  }
+
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
+  return (await response.json()) as T;
+}
+
+export function listScopes() {
+  return apiFetch<{ scopes: NetworkScope[] }>("/api/discovery/scopes");
+}
+
+export function createScope(payload: {
+  name: string;
+  cidr: string;
+  site?: string;
+  description?: string;
+  enabled?: boolean;
+  priority?: number;
+  defaultCredentialId?: string | null;
+}) {
+  return apiFetch<NetworkScope>("/api/discovery/scopes", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteScope(scopeId: string) {
+  return apiFetch<void>(`/api/discovery/scopes/${scopeId}`, {
+    method: "DELETE",
+  });
+}
+
+export function listCredentials() {
+  return apiFetch<{ credentials: SnmpCredential[] }>("/api/discovery/credentials");
+}
+
+export function createCredential(payload: {
+  name: string;
+  version: "v1" | "v2c" | "v3";
+  community?: string;
+  username?: string;
+  authProtocol?: SnmpCredential["authProtocol"];
+  authPassword?: string;
+  privProtocol?: SnmpCredential["privProtocol"];
+  privPassword?: string;
+  port?: number;
+  timeoutMs?: number;
+  retries?: number;
+  enabled?: boolean;
+}) {
+  return apiFetch<SnmpCredential>("/api/discovery/credentials", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteCredential(credentialId: string) {
+  return apiFetch<void>(`/api/discovery/credentials/${credentialId}`, {
+    method: "DELETE",
+  });
+}
+
+export function listRuns() {
+  return apiFetch<{ runs: DiscoveryRun[]; running: number }>("/api/discovery/runs");
+}
+
+export function queueDiscoveryRuns(payload: {
+  scopeIds?: string[];
+  cidrs?: string[];
+  credentialId?: string | null;
+}) {
+  return apiFetch<{ queued: number; runs: DiscoveryRun[] }>("/api/discovery/runs", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}

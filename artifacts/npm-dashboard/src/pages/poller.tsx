@@ -24,7 +24,12 @@ export default function Poller() {
           <h1 className="text-3xl font-bold tracking-tight font-mono flex items-center gap-3">
             <Zap className="h-8 w-8 text-warning" /> Poller Engine
           </h1>
-          <p className="text-muted-foreground text-sm mt-1">Backend worker metrics and SNMP polling control</p>
+          <p className="text-muted-foreground text-sm mt-1 max-w-xl">
+            Por predefinição o motor faz ping ICMP aos IPs dos nós (alcance e latência reais). CPU, memória e tráfego de
+            interfaces só seriam possíveis com SNMP — ainda não ligado a equipamentos reais. Para dados de demonstração
+            aleatórios, defina{" "}
+            <code className="text-xs bg-secondary/80 px-1 rounded">NETWORK_POLLING_MODE=simulated</code> na API.
+          </p>
         </div>
         <Button 
           onClick={handleManualPoll} 

@@ -3,3 +3,7 @@ export * from "./metrics";
 export * from "./topology";
 export * from "./flows";
 export * from "./alerts";
+export * from "./discovery";
+export * from "./interfaces";
+export * from "./l2";
+export * from "./environment";

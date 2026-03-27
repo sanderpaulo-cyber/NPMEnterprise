@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { Link, useLocation } from "wouter";
+import { useHealthCheck } from "@workspace/api-client-react";
 import { 
   Activity, 
   Server, 
@@ -6,6 +8,7 @@ import {
   AlertTriangle, 
   Zap, 
   ActivitySquare,
+  Radar,
   Search,
   Bell,
   Settings,
@@ -15,6 +18,16 @@ import {
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { useWebSocket } from "@/hooks/use-websocket";
+import { ApiStatusBanner } from "@/components/api-status-banner";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -24,6 +37,7 @@ const navItems = [
   { href: "/", label: "Dashboard", icon: ActivitySquare },
   { href: "/topology", label: "Topology Map", icon: Share2 },
   { href: "/nodes", label: "Network Nodes", icon: Server },
+  { href: "/discovery", label: "Discovery", icon: Radar },
   { href: "/netpath", label: "NetPath", icon: Activity },
   { href: "/flows", label: "Traffic Flows", icon: Wifi },
   { href: "/alerts", label: "Active Alerts", icon: AlertTriangle },
@@ -31,8 +45,17 @@ const navItems = [
 ];
 
 export function Layout({ children }: { children: React.ReactNode }) {
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
   const { isConnected } = useWebSocket();
+  const { data: health } = useHealthCheck();
+  const [topSearch, setTopSearch] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  function handleGlobalSearch(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const value = topSearch.trim();
+    setLocation(`/nodes${value ? `?q=${encodeURIComponent(value)}` : ""}`);
+  }
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background text-foreground">
@@ -88,23 +111,34 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative z-10">
+        <ApiStatusBanner />
         {/* Topbar */}
         <header className="h-16 flex-shrink-0 border-b border-border bg-background/50 backdrop-blur-md flex items-center justify-between px-6 z-20">
-          <div className="flex items-center w-96 relative">
-            <Search className="h-4 w-4 absolute left-3 text-muted-foreground" />
-            <input 
-              type="text" 
-              placeholder="Search nodes, IPs, alerts..." 
-              className="w-full bg-secondary/50 border border-border rounded-full pl-10 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all text-foreground placeholder:text-muted-foreground"
-            />
-          </div>
+          <form className="flex items-center w-96 gap-2" onSubmit={handleGlobalSearch}>
+            <div className="relative flex-1">
+              <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="text"
+                value={topSearch}
+                onChange={(event) => setTopSearch(event.target.value)}
+                placeholder="Buscar nós por nome ou IP..."
+                className="w-full rounded-full bg-secondary/50 pl-10"
+              />
+            </div>
+            <Button type="submit" variant="outline" className="border-border">
+              Buscar
+            </Button>
+          </form>
           
           <div className="flex items-center gap-4">
             <button className="relative p-2 text-muted-foreground hover:text-foreground transition-colors rounded-full hover:bg-secondary">
               <Bell className="h-5 w-5" />
               <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-destructive border border-background"></span>
             </button>
-            <button className="p-2 text-muted-foreground hover:text-foreground transition-colors rounded-full hover:bg-secondary">
+            <button
+              className="p-2 text-muted-foreground hover:text-foreground transition-colors rounded-full hover:bg-secondary"
+              onClick={() => setSettingsOpen(true)}
+            >
               <Settings className="h-5 w-5" />
             </button>
             <div className="h-8 w-8 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center text-primary ml-2">
@@ -124,6 +158,45 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       </main>
+
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Configurações</DialogTitle>
+            <DialogDescription>
+              Estado do ambiente local e atalhos operacionais do dashboard.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 text-sm">
+            <div className="rounded-lg border border-border bg-secondary/20 p-4">
+              <p className="font-medium">Sincronização em tempo real</p>
+              <p className="text-muted-foreground">
+                WebSocket: {isConnected ? "conectado" : "desconectado"}
+              </p>
+              <p className="text-muted-foreground">
+                API: {health?.status === "ok" ? "saudável" : "sem resposta"}
+              </p>
+            </div>
+            <div className="rounded-lg border border-border bg-secondary/20 p-4">
+              <p className="font-medium">URLs esperadas</p>
+              <p className="text-muted-foreground">
+                Dashboard: <code className="font-mono">{window.location.origin}</code>
+              </p>
+              <p className="text-muted-foreground">
+                API: <code className="font-mono">{import.meta.env.VITE_API_BASE_URL ?? "via proxy /api"}</code>
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" className="border-border" onClick={() => setLocation("/nodes")}>
+                Ir para inventário
+              </Button>
+              <Button variant="outline" className="border-border" onClick={() => setLocation("/poller")}>
+                Ir para poller
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

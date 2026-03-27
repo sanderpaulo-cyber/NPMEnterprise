@@ -75,6 +75,7 @@
     "zod": "catalog:"
   },
   "dependencies": {
-    "@xyflow/react": "^12.10.1"
+    "@xyflow/react": "^12.10.1",
+    "react-force-graph-2d": "^1.29.1"
   }
 }

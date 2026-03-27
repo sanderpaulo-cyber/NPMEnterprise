@@ -1,4 +1,8 @@
-import { useGetNetPath, useListNodes } from "@workspace/api-client-react";
+import {
+  getGetNetPathQueryKey,
+  useGetNetPath,
+  useListNodes,
+} from "@workspace/api-client-react";
 import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -16,9 +20,14 @@ export default function NetPath() {
   
   // Only fetch if triggered
   const { data: pathData, isLoading, refetch } = useGetNetPath(
-    sourceId, 
+    sourceId || "_",
     { target: targetIp },
-    { query: { enabled: isTraced && !!sourceId } }
+    {
+      query: {
+        enabled: isTraced && Boolean(sourceId),
+        queryKey: getGetNetPathQueryKey(sourceId || "_", { target: targetIp }),
+      },
+    },
   );
 
   const handleTrace = () => {

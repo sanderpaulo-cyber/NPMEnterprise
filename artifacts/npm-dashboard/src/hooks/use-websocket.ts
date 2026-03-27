@@ -1,11 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
-import { useToast } from '@/hooks/use-toast';
+import { useState, useEffect, useRef, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
 
-interface WSMessage {
-  type: 'node_status' | 'alert' | 'metric_update';
-  data: any;
-}
+type WsPayload = {
+  type: string;
+  [key: string]: unknown;
+};
 
 export function useWebSocket() {
   const [isConnected, setIsConnected] = useState(false);
@@ -13,53 +13,84 @@ export function useWebSocket() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  useEffect(() => {
-    // In a real environment, this would be wss://${window.location.host}/api/ws
-    // We use a mock connection here that simulates occasional events for the UI
-    const connect = () => {
-      console.log("[WebSocket] Connecting...");
-      setIsConnected(true);
-
-      // Simulate incoming real-time events
-      const interval = setInterval(() => {
-        const events: WSMessage['type'][] = ['node_status', 'alert', 'metric_update'];
-        const randomEvent = events[Math.floor(Math.random() * events.length)];
-        
-        handleMessage({ type: randomEvent, data: { mock: true, timestamp: new Date().toISOString() } });
-      }, 15000); // Fire a mock event every 15s
-
-      return () => {
-        clearInterval(interval);
-        console.log("[WebSocket] Disconnected");
-        setIsConnected(false);
-      };
-    };
-
-    const handleMessage = (msg: WSMessage) => {
+  const handleMessage = useCallback(
+    (msg: WsPayload) => {
       switch (msg.type) {
-        case 'node_status':
-          // Invalidate nodes to trigger refetch
-          queryClient.invalidateQueries({ queryKey: ['/api/nodes'] });
-          queryClient.invalidateQueries({ queryKey: ['/api/nodes/stats/summary'] });
+        case "connected":
           break;
-        case 'alert':
-          queryClient.invalidateQueries({ queryKey: ['/api/alerts'] });
+        case "node_status":
+          queryClient.invalidateQueries({ queryKey: ["/api/nodes"] });
+          queryClient.invalidateQueries({
+            queryKey: ["/api/nodes/stats/summary"],
+          });
+          break;
+        case "alert":
+          queryClient.invalidateQueries({ queryKey: ["/api/alerts"] });
           toast({
-            title: "New Alert Received",
-            description: "A network anomaly has been detected.",
+            title: "Novo alerta",
+            description:
+              typeof msg.message === "string"
+                ? msg.message
+                : "Foi detetada uma anomalia na rede.",
             variant: "destructive",
           });
           break;
-        case 'metric_update':
-          // Softly invalidate top-n so charts update
-          queryClient.invalidateQueries({ queryKey: ['/api/metrics/top-n'] });
+        case "metric":
+        case "metric_update":
+          queryClient.invalidateQueries({ queryKey: ["/api/metrics/top-n"] });
+          break;
+        default:
           break;
       }
+    },
+    [queryClient, toast],
+  );
+
+  useEffect(() => {
+    let stopped = false;
+    let reconnectTimer: number | undefined;
+
+    const connect = () => {
+      if (stopped) return;
+      const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const url = `${proto}//${window.location.host}/api/ws`;
+      const ws = new WebSocket(url);
+      wsRef.current = ws;
+
+      ws.onopen = () => setIsConnected(true);
+
+      ws.onclose = () => {
+        setIsConnected(false);
+        wsRef.current = null;
+        if (!stopped) {
+          reconnectTimer = window.setTimeout(connect, 3000);
+        }
+      };
+
+      ws.onerror = () => {
+        ws.close();
+      };
+
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(String(ev.data)) as WsPayload;
+          handleMessage(msg);
+        } catch {
+          /* ignore */
+        }
+      };
     };
 
-    const cleanup = connect();
-    return cleanup;
-  }, [queryClient, toast]);
+    connect();
+
+    return () => {
+      stopped = true;
+      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
+      wsRef.current?.close();
+      wsRef.current = null;
+      setIsConnected(false);
+    };
+  }, [handleMessage]);
 
   return { isConnected };
 }

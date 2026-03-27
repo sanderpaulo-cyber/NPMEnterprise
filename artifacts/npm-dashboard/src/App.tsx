@@ -13,6 +13,7 @@ import NetPath from "@/pages/netpath";
 import Flows from "@/pages/flows";
 import Alerts from "@/pages/alerts";
 import Poller from "@/pages/poller";
+import Discovery from "@/pages/discovery";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -37,6 +38,7 @@ function Router() {
         <Route path="/flows" component={Flows} />
         <Route path="/alerts" component={Alerts} />
         <Route path="/poller" component={Poller} />
+        <Route path="/discovery" component={Discovery} />
         <Route component={NotFound} />
       </Switch>
     </Layout>

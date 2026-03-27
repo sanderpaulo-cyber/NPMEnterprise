@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "export NODE_ENV=development && pnpm run build && pnpm run start",
+    "dev": "pnpm run build && pnpm run start",
     "build": "node ./build.mjs",
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
@@ -16,6 +16,7 @@
     "cors": "^2",
     "drizzle-orm": "catalog:",
     "express": "^5",
+    "net-snmp": "^3.26.1",
     "pino": "^9",
     "pino-http": "^10",
     "ws": "^8.20.0"
