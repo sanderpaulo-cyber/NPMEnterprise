@@ -7,9 +7,13 @@ out-tsc
 *.tsbuildinfo
 .expo
 .expo-shared
+build
+.turbo
+.vite
 
 # dependencies
 node_modules
+pnpm-lock.yaml.bak
 
 # IDEs and editors
 /.idea
@@ -26,6 +30,7 @@ node_modules
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
+.history/
 
 # misc
 /.sass-cache
@@ -36,10 +41,26 @@ npm-debug.log
 yarn-error.log
 testem.log
 /typings
+*.log
+pnpm-debug.log*
+
+# env files
+.env
+.env.*
+!.env.example
+
+# local databases and temp files
+*.sqlite
+*.sqlite3
+*.pid
+*.seed
+*.tmp
+*.temp
 
 # System Files
 .DS_Store
 Thumbs.db
+Desktop.ini
 
 .cursor/rules/nx-rules.mdc
 .github/instructions/nx.instructions.md
@@ -47,3 +68,6 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Cursor / local tooling
+.cursor-tmp/
