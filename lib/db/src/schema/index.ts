@@ -7,3 +7,4 @@ export * from "./discovery";
 export * from "./interfaces";
 export * from "./l2";
 export * from "./environment";
+export * from "./hardware";

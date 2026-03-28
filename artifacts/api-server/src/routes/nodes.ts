@@ -1,24 +1,70 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import {
-  nodesTable,
-  metricsTable,
   alertsTable,
+  flowsTable,
+  metricsTable,
   nodeArpEntriesTable,
   nodeEnvironmentSensorsTable,
+  nodeHardwareComponentsTable,
   nodeInterfacesTable,
   nodeMacEntriesTable,
+  nodePortObservationsTable,
+  nodePortProfilesTable,
   nodeVlansTable,
+  nodesTable,
+  snmpCredentialsTable,
+  topologyEdgesTable,
+  type SnmpCredentialRecord,
 } from "@workspace/db/schema";
-import { eq, and, desc, avg, sql, inArray } from "drizzle-orm";
+import { eq, and, desc, avg, sql, inArray, or } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import {
   correlateNodeAccessPorts,
   listNodePortObservations,
   listNodePortProfiles,
 } from "../lib/l2-correlation";
+import { fetchSnmpDiagnostics } from "../lib/snmp-client";
 
 const router: IRouter = Router();
+
+async function resolveNodeCredential(node: {
+  credentialId: string | null;
+  snmpVersion: "v1" | "v2c" | "v3" | null;
+  snmpCommunity: string | null;
+}): Promise<SnmpCredentialRecord | null> {
+  if (node.credentialId) {
+    const [credential] = await db
+      .select()
+      .from(snmpCredentialsTable)
+      .where(eq(snmpCredentialsTable.id, node.credentialId))
+      .limit(1);
+    if (credential?.enabled) {
+      return credential;
+    }
+  }
+
+  if (node.snmpVersion === "v1" || node.snmpVersion === "v2c") {
+    return {
+      id: `inline-${node.snmpVersion}-${node.snmpCommunity ?? "public"}`,
+      name: "inline-node-credential",
+      version: node.snmpVersion,
+      community: node.snmpCommunity ?? "public",
+      username: null,
+      authProtocol: "none",
+      authPassword: null,
+      privProtocol: "none",
+      privPassword: null,
+      port: 161,
+      timeoutMs: 2000,
+      retries: 1,
+      enabled: true,
+      createdAt: new Date(),
+    };
+  }
+
+  return null;
+}
 
 router.get("/", async (req, res): Promise<void> => {
   try {
@@ -131,6 +177,67 @@ router.get("/:nodeId", async (req, res): Promise<void> => {
   }
 });
 
+router.get("/:nodeId/snmp-diagnostics", async (req, res): Promise<void> => {
+  try {
+    const { nodeId } = req.params;
+    const [node] = await db.select().from(nodesTable).where(eq(nodesTable.id, nodeId));
+    if (!node) {
+      res.status(404).json({ error: "Node not found" });
+      return;
+    }
+
+    const credential = await resolveNodeCredential(node);
+    if (!credential) {
+      res.status(200).json({
+        nodeId,
+        target: node.ipAddress,
+        hasCredential: false,
+        message: "Nenhuma credencial SNMP valida esta associada a este no.",
+      });
+      return;
+    }
+
+    const diagnostics = await fetchSnmpDiagnostics(node.ipAddress, credential);
+    if (!diagnostics) {
+      res.status(200).json({
+        nodeId,
+        target: node.ipAddress,
+        hasCredential: true,
+        credential: {
+          id: credential.id,
+          name: credential.name,
+          version: credential.version,
+          port: credential.port,
+          timeoutMs: credential.timeoutMs,
+          retries: credential.retries,
+        },
+        message: "Falha ao executar o diagnostico SNMP para este no.",
+      });
+      return;
+    }
+
+    res.json({
+      nodeId,
+      target: node.ipAddress,
+      hasCredential: true,
+      credential: {
+        id: credential.id,
+        name: credential.name,
+        version: credential.version,
+        port: credential.port,
+        timeoutMs: credential.timeoutMs,
+        retries: credential.retries,
+      },
+      diagnostics,
+    });
+    return;
+  } catch (err) {
+    req.log.error({ err }, "Failed to run node SNMP diagnostics");
+    res.status(500).json({ error: "Failed to run node SNMP diagnostics" });
+    return;
+  }
+});
+
 router.get("/:nodeId/interfaces", async (req, res): Promise<void> => {
   try {
     const { nodeId } = req.params;
@@ -201,6 +308,52 @@ router.get("/:nodeId/environment", async (req, res): Promise<void> => {
   } catch (err) {
     req.log.error({ err }, "Failed to get node environmental sensors");
     res.status(500).json({ error: "Failed to get node environmental sensors" });
+    return;
+  }
+});
+
+router.get("/:nodeId/hardware", async (req, res): Promise<void> => {
+  try {
+    const { nodeId } = req.params;
+    const components = await db
+      .select()
+      .from(nodeHardwareComponentsTable)
+      .where(eq(nodeHardwareComponentsTable.nodeId, nodeId))
+      .orderBy(nodeHardwareComponentsTable.parentIndex, nodeHardwareComponentsTable.entityIndex);
+
+    res.json({
+      nodeId,
+      summary: {
+        totalComponents: components.length,
+        chassisCount: components.filter((item) => item.entityClass === "chassis").length,
+        moduleCount: components.filter((item) => item.entityClass === "module").length,
+        powerSupplyCount: components.filter((item) => item.entityClass === "power-supply").length,
+        fanTrayCount: components.filter((item) => item.entityClass === "fan").length,
+      },
+      components: components.map((component) => ({
+        id: component.id,
+        entityIndex: component.entityIndex,
+        parentIndex: component.parentIndex,
+        containedInIndex: component.containedInIndex,
+        entityClass: component.entityClass,
+        name: component.name,
+        description: component.description,
+        vendor: component.vendor,
+        model: component.model,
+        serialNumber: component.serialNumber,
+        assetTag: component.assetTag,
+        hardwareRevision: component.hardwareRevision,
+        firmwareVersion: component.firmwareVersion,
+        softwareVersion: component.softwareVersion,
+        isFieldReplaceable: component.isFieldReplaceable,
+        source: component.source,
+        updatedAt: component.updatedAt.toISOString(),
+      })),
+    });
+    return;
+  } catch (err) {
+    req.log.error({ err }, "Failed to get node hardware inventory");
+    res.status(500).json({ error: "Failed to get node hardware inventory" });
     return;
   }
 });
@@ -352,6 +505,20 @@ router.post("/", async (req, res): Promise<void> => {
 router.delete("/:nodeId", async (req, res): Promise<void> => {
   try {
     const { nodeId } = req.params;
+    await db.delete(nodeEnvironmentSensorsTable).where(eq(nodeEnvironmentSensorsTable.nodeId, nodeId));
+    await db.delete(nodeHardwareComponentsTable).where(eq(nodeHardwareComponentsTable.nodeId, nodeId));
+    await db.delete(nodeInterfacesTable).where(eq(nodeInterfacesTable.nodeId, nodeId));
+    await db.delete(nodeArpEntriesTable).where(eq(nodeArpEntriesTable.nodeId, nodeId));
+    await db.delete(nodeMacEntriesTable).where(eq(nodeMacEntriesTable.nodeId, nodeId));
+    await db.delete(nodeVlansTable).where(eq(nodeVlansTable.nodeId, nodeId));
+    await db.delete(nodePortObservationsTable).where(eq(nodePortObservationsTable.nodeId, nodeId));
+    await db.delete(nodePortProfilesTable).where(eq(nodePortProfilesTable.nodeId, nodeId));
+    await db.delete(metricsTable).where(eq(metricsTable.nodeId, nodeId));
+    await db.delete(flowsTable).where(eq(flowsTable.nodeId, nodeId));
+    await db.delete(alertsTable).where(eq(alertsTable.nodeId, nodeId));
+    await db
+      .delete(topologyEdgesTable)
+      .where(or(eq(topologyEdgesTable.sourceId, nodeId), eq(topologyEdgesTable.targetId, nodeId)));
     await db.delete(nodesTable).where(eq(nodesTable.id, nodeId));
     res.status(204).send();
     return;

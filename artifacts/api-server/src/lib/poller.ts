@@ -6,6 +6,7 @@ import {
   metricsTable,
   nodeArpEntriesTable,
   nodeEnvironmentSensorsTable,
+  nodeHardwareComponentsTable,
   nodeInterfacesTable,
   nodeMacEntriesTable,
   nodeVlansTable,
@@ -473,6 +474,47 @@ async function syncEnvironmentSensors(
   );
 }
 
+async function syncHardwareComponents(
+  nodeId: string,
+  snapshot: Awaited<ReturnType<typeof fetchSnmpPollSnapshot>> | null,
+  now: Date,
+) {
+  await db
+    .delete(nodeHardwareComponentsTable)
+    .where(eq(nodeHardwareComponentsTable.nodeId, nodeId));
+
+  const components = snapshot?.hardwareComponents ?? [];
+  if (components.length === 0) return;
+
+  await db.insert(nodeHardwareComponentsTable).values(
+    components.map((component) => ({
+      id: `${nodeId}:hw:${component.entityIndex}`,
+      nodeId,
+      entityIndex: component.entityIndex,
+      parentIndex: component.parentIndex ?? null,
+      containedInIndex: component.containedInIndex ?? null,
+      entityClass: component.entityClass ?? null,
+      name: component.name,
+      description: component.description ?? null,
+      vendor: component.vendor ?? null,
+      model: component.model ?? null,
+      serialNumber: component.serialNumber ?? null,
+      assetTag: component.assetTag ?? null,
+      hardwareRevision: component.hardwareRevision ?? null,
+      firmwareVersion: component.firmwareVersion ?? null,
+      softwareVersion: component.softwareVersion ?? null,
+      isFieldReplaceable:
+        component.isFieldReplaceable == null
+          ? null
+          : component.isFieldReplaceable
+            ? "true"
+            : "false",
+      source: component.source ?? null,
+      updatedAt: now,
+    })),
+  );
+}
+
 async function upsertInterfaces(
   nodeId: string,
   interfaces: NonNullable<Awaited<ReturnType<typeof fetchSnmpPollSnapshot>>>["interfaces"],
@@ -638,6 +680,7 @@ async function pollNodeReal(node: {
 
     await upsertInterfaces(node.id, snmp?.interfaces, now);
     await syncEnvironmentSensors(node.id, snmp, now);
+    await syncHardwareComponents(node.id, snmp, now);
     await syncL2Inventory(node.id, snmp, now);
     await syncTopologyFromLldp({
       nodeId: node.id,

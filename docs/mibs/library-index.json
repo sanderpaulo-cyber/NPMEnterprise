@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "standardMibs": [
+    "ENTITY-MIB",
+    "ENTITY-SENSOR-MIB",
+    "HOST-RESOURCES-MIB",
+    "IF-MIB",
+    "IP-MIB",
+    "BRIDGE-MIB",
+    "Q-BRIDGE-MIB",
+    "LLDP-MIB"
+  ],
+  "vendors": [
+    {
+      "vendor": "Cisco",
+      "enterpriseRoots": ["1.3.6.1.4.1.9"],
+      "mibs": ["CISCO-PROCESS-MIB", "CISCO-MEMORY-POOL-MIB", "CISCO-ENTITY-*"],
+      "cpu": ["1.3.6.1.4.1.9.9.109.1.1.1.1.25", "1.3.6.1.4.1.9.9.109.1.1.1.1.8", "1.3.6.1.2.1.25.3.3.1.2"],
+      "memory": ["1.3.6.1.4.1.9.9.48.1.1.1.6", "1.3.6.1.4.1.9.9.48.1.1.1.5"]
+    },
+    {
+      "vendor": "Juniper",
+      "enterpriseRoots": ["1.3.6.1.4.1.2636"],
+      "mibs": ["JUNIPER-MIB"],
+      "cpu": ["1.3.6.1.4.1.2636.3.1.13.1.8", "1.3.6.1.2.1.25.3.3.1.2"],
+      "memory": ["1.3.6.1.4.1.2636.3.1.13.1.11"]
+    },
+    {
+      "vendor": "Fortinet",
+      "enterpriseRoots": ["1.3.6.1.4.1.12356"],
+      "mibs": ["FORTINET-FORTIGATE-MIB"],
+      "cpu": ["1.3.6.1.4.1.12356.101.4.1.3.0", "1.3.6.1.2.1.25.3.3.1.2"],
+      "memory": ["1.3.6.1.4.1.12356.101.4.1.4.0"]
+    },
+    {
+      "vendor": "HPE/Aruba",
+      "enterpriseRoots": ["1.3.6.1.4.1.11", "1.3.6.1.4.1.14823"],
+      "mibs": ["HP-ICF-*"],
+      "cpu": ["1.3.6.1.4.1.11.2.14.11.5.1.9.6.1.0", "1.3.6.1.4.1.11.2.1.7.0", "1.3.6.1.2.1.25.3.3.1.2"],
+      "memory": []
+    },
+    {
+      "vendor": "Dell",
+      "enterpriseRoots": ["1.3.6.1.4.1.674", "1.3.6.1.4.1.89"],
+      "mibs": ["DELL-NETWORKING-*"],
+      "cpu": ["1.3.6.1.4.1.674.10895.5000.2.6132.1.1.1.1.4.4.0", "1.3.6.1.4.1.674.10895.5000.2.6132.1.1.1.1.4.9", "1.3.6.1.2.1.25.3.3.1.2"],
+      "memory": ["1.3.6.1.4.1.674.10895.5000.2.6132.1.1.1.1.4.2", "1.3.6.1.4.1.674.10895.5000.2.6132.1.1.1.1.4.1"]
+    },
+    {
+      "vendor": "Arista",
+      "enterpriseRoots": ["1.3.6.1.4.1.30065"],
+      "mibs": ["ARISTA-HARDWARE-UTILIZATION-MIB", "ARISTA-*"],
+      "cpu": ["1.3.6.1.2.1.25.3.3.1.2"],
+      "memory": []
+    },
+    {
+      "vendor": "MikroTik",
+      "enterpriseRoots": ["1.3.6.1.4.1.14988"],
+      "mibs": ["MIKROTIK-MIB"],
+      "cpu": ["1.3.6.1.2.1.25.3.3.1.2"],
+      "memory": []
+    },
+    {
+      "vendor": "Palo Alto",
+      "enterpriseRoots": ["1.3.6.1.4.1.25461"],
+      "mibs": ["PAN-COMMON-MIB"],
+      "cpu": ["1.3.6.1.2.1.25.3.3.1.2"],
+      "memory": []
+    }
+  ]
+}

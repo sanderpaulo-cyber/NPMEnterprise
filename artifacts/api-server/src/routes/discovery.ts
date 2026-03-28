@@ -7,6 +7,7 @@ import {
   snmpCredentialsTable,
 } from "@workspace/db/schema";
 import {
+  clearDiscoveryData,
   countRunningDiscoveryRuns,
   getCredential,
   getDiscoveryRun,
@@ -38,14 +39,23 @@ router.post("/scopes", async (req, res): Promise<void> => {
     const {
       name,
       cidr,
+      rangeStartIp,
+      rangeEndIp,
+      primaryRouterIp,
+      primaryRouterName,
       site,
       description,
       enabled = true,
       priority = 100,
       defaultCredentialId,
     } = req.body ?? {};
-    if (!name || !cidr) {
-      res.status(400).json({ error: "name and cidr are required" });
+    const normalizedCidr = cidr ? String(cidr).trim() : null;
+    const normalizedRangeStart = rangeStartIp ? String(rangeStartIp).trim() : null;
+    const normalizedRangeEnd = rangeEndIp ? String(rangeEndIp).trim() : null;
+    if (!name || (!normalizedCidr && !(normalizedRangeStart && normalizedRangeEnd))) {
+      res.status(400).json({
+        error: "name and either cidr or rangeStartIp/rangeEndIp are required",
+      });
       return;
     }
 
@@ -60,12 +70,16 @@ router.post("/scopes", async (req, res): Promise<void> => {
     const scope = {
       id: randomUUID(),
       name: String(name),
-      cidr: String(cidr),
-      site: site ? String(site) : null,
-      description: description ? String(description) : null,
+      cidr: normalizedCidr ?? undefined,
+      rangeStartIp: normalizedRangeStart ?? undefined,
+      rangeEndIp: normalizedRangeEnd ?? undefined,
+      primaryRouterIp: primaryRouterIp ? String(primaryRouterIp).trim() : undefined,
+      primaryRouterName: primaryRouterName ? String(primaryRouterName).trim() : undefined,
+      site: site ? String(site) : undefined,
+      description: description ? String(description) : undefined,
       enabled: Boolean(enabled),
       priority: Number(priority) || 100,
-      defaultCredentialId: defaultCredentialId ? String(defaultCredentialId) : null,
+      defaultCredentialId: defaultCredentialId ? String(defaultCredentialId) : undefined,
     };
 
     await db.insert(networkScopesTable).values(scope);
@@ -204,9 +218,50 @@ router.get("/runs/:runId", async (req, res): Promise<void> => {
   }
 });
 
+router.post("/clear", async (req, res): Promise<void> => {
+  try {
+    const { scopeId, cidr, rangeStartIp, rangeEndIp, removeNodes = true } = req.body ?? {};
+    if (!scopeId && !cidr && !(rangeStartIp && rangeEndIp)) {
+      res.status(400).json({
+        error: "scopeId, cidr, or rangeStartIp/rangeEndIp is required",
+      });
+      return;
+    }
+
+    const result = await clearDiscoveryData({
+      scopeId: scopeId ? String(scopeId) : null,
+      cidr: cidr ? String(cidr).trim() : null,
+      rangeStartIp: rangeStartIp ? String(rangeStartIp).trim() : null,
+      rangeEndIp: rangeEndIp ? String(rangeEndIp).trim() : null,
+      removeNodes: Boolean(removeNodes),
+    });
+
+    res.json({
+      ...result,
+      message:
+        result.mode === "scope"
+          ? `Limpeza concluída para o escopo informado. ${result.removedRuns} execução(ões) e ${result.removedNodes} dispositivo(s) removidos.`
+          : `Limpeza concluída para o alvo informado. ${result.removedRuns} execução(ões) e ${result.removedNodes} dispositivo(s) removidos.`,
+    });
+    return;
+  } catch (err) {
+    req.log.error({ err }, "Failed to clear discovery data");
+    res.status(500).json({ error: err instanceof Error ? err.message : "Failed to clear discovery data" });
+    return;
+  }
+});
+
 router.post("/runs", async (req, res): Promise<void> => {
   try {
-    const { scopeIds, cidrs, credentialId } = req.body ?? {};
+    const {
+      scopeIds,
+      cidrs,
+      credentialId,
+      rangeStartIp,
+      rangeEndIp,
+      primaryRouterIp,
+      primaryRouterName,
+    } = req.body ?? {};
     const queuedRuns = [];
 
     if (Array.isArray(scopeIds) && scopeIds.length > 0) {
@@ -224,9 +279,21 @@ router.post("/runs", async (req, res): Promise<void> => {
       }
     }
 
+    if (rangeStartIp && rangeEndIp) {
+      queuedRuns.push(
+        await queueDiscoveryRun({
+          rangeStartIp: String(rangeStartIp).trim(),
+          rangeEndIp: String(rangeEndIp).trim(),
+          primaryRouterIp: primaryRouterIp ? String(primaryRouterIp).trim() : null,
+          primaryRouterName: primaryRouterName ? String(primaryRouterName).trim() : null,
+          credentialId: credentialId ? String(credentialId) : null,
+        }),
+      );
+    }
+
     if (queuedRuns.length === 0) {
       res.status(400).json({
-        error: "Provide at least one scopeId or cidr to start discovery",
+        error: "Provide at least one scopeId, cidr, or rangeStartIp/rangeEndIp to start discovery",
       });
       return;
     }
@@ -249,6 +316,10 @@ router.post("/scan", async (req, res): Promise<void> => {
       subnet,
       scopeId,
       credentialId,
+      rangeStartIp,
+      rangeEndIp,
+      primaryRouterIp,
+      primaryRouterName,
       snmpCommunity,
       snmpVersion,
     } = req.body ?? {};
@@ -261,6 +332,10 @@ router.post("/scan", async (req, res): Promise<void> => {
       }
       const run = await queueDiscoveryRun({
         cidr: scope.cidr,
+        rangeStartIp: scope.rangeStartIp,
+        rangeEndIp: scope.rangeEndIp,
+        primaryRouterIp: scope.primaryRouterIp,
+        primaryRouterName: scope.primaryRouterName,
         scopeId: scope.id,
         scopeName: scope.name,
         credentialId:
@@ -270,23 +345,28 @@ router.post("/scan", async (req, res): Promise<void> => {
       });
       res.status(202).json({
         scanId: run.id,
-        subnet: scope.cidr,
+        subnet: scope.cidr ?? `${scope.rangeStartIp}-${scope.rangeEndIp}`,
         status: run.status,
         message: `Discovery iniciado para o escopo ${scope.name}`,
       });
       return;
     }
 
-    if (!subnet) {
-      res.status(400).json({ error: "subnet or scopeId is required" });
+    if (!subnet && !(rangeStartIp && rangeEndIp)) {
+      res.status(400).json({
+        error: "subnet, rangeStartIp/rangeEndIp, or scopeId is required",
+      });
       return;
     }
 
     let resolvedCredentialId: string | null = credentialId ? String(credentialId) : null;
     if (!resolvedCredentialId && (snmpCommunity || snmpVersion)) {
+      const targetLabel = subnet
+        ? String(subnet).trim()
+        : `${String(rangeStartIp).trim()}-${String(rangeEndIp).trim()}`;
       const tempCredential = {
         id: randomUUID(),
-        name: `temporary-${subnet}`,
+        name: `temporary-${targetLabel}`,
         version:
           snmpVersion === "v1" || snmpVersion === "v3" ? snmpVersion : "v2c",
         community: snmpCommunity ? String(snmpCommunity) : "public",
@@ -306,15 +386,22 @@ router.post("/scan", async (req, res): Promise<void> => {
     }
 
     const run = await queueDiscoveryRun({
-      cidr: String(subnet),
+      cidr: subnet ? String(subnet).trim() : null,
+      rangeStartIp: rangeStartIp ? String(rangeStartIp).trim() : null,
+      rangeEndIp: rangeEndIp ? String(rangeEndIp).trim() : null,
+      primaryRouterIp: primaryRouterIp ? String(primaryRouterIp).trim() : null,
+      primaryRouterName: primaryRouterName ? String(primaryRouterName).trim() : null,
       credentialId: resolvedCredentialId,
     });
 
+    const targetLabel = subnet
+      ? String(subnet).trim()
+      : `${String(rangeStartIp).trim()}-${String(rangeEndIp).trim()}`;
     res.status(202).json({
       scanId: run.id,
-      subnet,
+      subnet: targetLabel,
       status: run.status,
-      message: `Discovery scan started for subnet ${subnet}`,
+      message: `Discovery scan started for target ${targetLabel}`,
     });
     return;
   } catch (err) {

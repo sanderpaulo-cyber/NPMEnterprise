@@ -1,7 +1,11 @@
 export interface NetworkScope {
   id: string;
   name: string;
-  cidr: string;
+  cidr?: string | null;
+  rangeStartIp?: string | null;
+  rangeEndIp?: string | null;
+  primaryRouterIp?: string | null;
+  primaryRouterName?: string | null;
   site?: string | null;
   description?: string | null;
   enabled: boolean;
@@ -80,7 +84,11 @@ export function listScopes() {
 
 export function createScope(payload: {
   name: string;
-  cidr: string;
+  cidr?: string | null;
+  rangeStartIp?: string | null;
+  rangeEndIp?: string | null;
+  primaryRouterIp?: string | null;
+  primaryRouterName?: string | null;
   site?: string;
   description?: string;
   enabled?: boolean;
@@ -136,9 +144,32 @@ export function listRuns() {
 export function queueDiscoveryRuns(payload: {
   scopeIds?: string[];
   cidrs?: string[];
+  rangeStartIp?: string | null;
+  rangeEndIp?: string | null;
+  primaryRouterIp?: string | null;
+  primaryRouterName?: string | null;
   credentialId?: string | null;
 }) {
   return apiFetch<{ queued: number; runs: DiscoveryRun[] }>("/api/discovery/runs", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function clearDiscovery(payload: {
+  scopeId?: string | null;
+  cidr?: string | null;
+  rangeStartIp?: string | null;
+  rangeEndIp?: string | null;
+  removeNodes?: boolean;
+}) {
+  return apiFetch<{
+    removedRuns: number;
+    removedNodes: number;
+    target: string;
+    mode: "scope" | "target";
+    message: string;
+  }>("/api/discovery/clear", {
     method: "POST",
     body: JSON.stringify(payload),
   });

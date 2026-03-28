@@ -20,6 +20,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -55,6 +56,7 @@ export default function Nodes() {
   const [showFilters, setShowFilters] = useState(false);
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [addOpen, setAddOpen] = useState(false);
   const [discoveryOpen, setDiscoveryOpen] = useState(false);
   const [createForm, setCreateForm] = useState({
@@ -98,6 +100,16 @@ export default function Nodes() {
       ) || [],
     [data?.nodes, searchTerm],
   );
+
+  useEffect(() => {
+    setSelectedNodeIds((current) =>
+      current.filter((nodeId) => filteredNodes.some((node) => node.id === nodeId)),
+    );
+  }, [filteredNodes]);
+
+  const allVisibleSelected =
+    filteredNodes.length > 0 &&
+    filteredNodes.every((node) => selectedNodeIds.includes(node.id));
 
   async function refreshQueries() {
     await Promise.all([
@@ -182,6 +194,63 @@ export default function Nodes() {
     );
   }
 
+  function toggleNodeSelection(nodeId: string, checked: boolean) {
+    setSelectedNodeIds((current) =>
+      checked ? [...new Set([...current, nodeId])] : current.filter((id) => id !== nodeId),
+    );
+  }
+
+  function toggleSelectAllVisible(checked: boolean) {
+    setSelectedNodeIds((current) => {
+      if (!checked) {
+        return current.filter((id) => !filteredNodes.some((node) => node.id === id));
+      }
+      return [...new Set([...current, ...filteredNodes.map((node) => node.id)])];
+    });
+  }
+
+  async function handleBulkDelete() {
+    const targetNodes =
+      selectedNodeIds.length > 0
+        ? filteredNodes.filter((node) => selectedNodeIds.includes(node.id))
+        : (data?.nodes ?? []);
+
+    if (targetNodes.length === 0) {
+      return;
+    }
+
+    const removeSelected = selectedNodeIds.length > 0;
+    const confirmed = window.confirm(
+      removeSelected
+        ? `Remover ${targetNodes.length} nó(s) selecionado(s)?`
+        : `Remover todos os ${targetNodes.length} nós inventariados?`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      for (const node of targetNodes) {
+        await deleteNode.mutateAsync({ nodeId: node.id });
+      }
+      setSelectedNodeIds([]);
+      await refreshQueries();
+      toast({
+        title: removeSelected ? "Nós removidos" : "Todos os nós removidos",
+        description: removeSelected
+          ? `${targetNodes.length} dispositivo(s) foram removidos.`
+          : "O inventário de nós foi limpo.",
+      });
+    } catch (error) {
+      toast({
+        title: "Falha ao remover nós",
+        description:
+          error instanceof Error ? error.message : "A remoção em lote não foi concluída.",
+        variant: "destructive",
+      });
+    }
+  }
+
   function handleDiscovery(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     triggerDiscovery.mutate(
@@ -235,6 +304,21 @@ export default function Nodes() {
             onClick={() => setAddOpen(true)}
           >
             <Plus className="h-4 w-4 mr-2" /> Add Node
+          </Button>
+          <Button
+            variant="destructive"
+            className="flex-1 sm:flex-none"
+            disabled={(data?.nodes?.length ?? 0) === 0 || deleteNode.isPending}
+            onClick={handleBulkDelete}
+          >
+            {deleteNode.isPending ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Trash2 className="h-4 w-4 mr-2" />
+            )}
+            {selectedNodeIds.length > 0
+              ? `Remove Selected (${selectedNodeIds.length})`
+              : `Remove All (${data?.nodes.length ?? 0})`}
           </Button>
         </div>
       </div>
@@ -313,6 +397,13 @@ export default function Nodes() {
             <Table>
               <TableHeader className="bg-secondary/40">
                 <TableRow className="hover:bg-transparent border-border/50">
+                  <TableHead className="w-12">
+                    <Checkbox
+                      checked={allVisibleSelected}
+                      onCheckedChange={(checked) => toggleSelectAllVisible(checked === true)}
+                      aria-label="Selecionar todos os nós visíveis"
+                    />
+                  </TableHead>
                   <TableHead className="font-mono uppercase text-xs tracking-wider">Status</TableHead>
                   <TableHead className="font-mono uppercase text-xs tracking-wider">Hostname</TableHead>
                   <TableHead className="font-mono uppercase text-xs tracking-wider">IP Address</TableHead>
@@ -327,6 +418,7 @@ export default function Nodes() {
                 {isLoading ? (
                   Array.from({ length: 5 }).map((_, i) => (
                     <TableRow key={i} className="border-border/50">
+                      <TableCell><div className="h-4 w-4 bg-muted animate-pulse rounded" /></TableCell>
                       <TableCell><div className="h-6 w-16 bg-muted animate-pulse rounded" /></TableCell>
                       <TableCell><div className="h-4 w-32 bg-muted animate-pulse rounded" /></TableCell>
                       <TableCell><div className="h-4 w-24 bg-muted animate-pulse rounded" /></TableCell>
@@ -339,13 +431,22 @@ export default function Nodes() {
                   ))
                 ) : filteredNodes.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="h-32 text-center text-muted-foreground">
+                    <TableCell colSpan={9} className="h-32 text-center text-muted-foreground">
                       No nodes found matching your criteria.
                     </TableCell>
                   </TableRow>
                 ) : (
                   filteredNodes.map((node) => (
                     <TableRow key={node.id} className="border-border/50 hover:bg-secondary/30 transition-colors group">
+                      <TableCell>
+                        <Checkbox
+                          checked={selectedNodeIds.includes(node.id)}
+                          onCheckedChange={(checked) =>
+                            toggleNodeSelection(node.id, checked === true)
+                          }
+                          aria-label={`Selecionar nó ${node.name}`}
+                        />
+                      </TableCell>
                       <TableCell><StatusBadge status={node.status} /></TableCell>
                       <TableCell className="font-medium text-foreground">{node.name}</TableCell>
                       <TableCell className="font-mono text-muted-foreground text-sm">{node.ipAddress}</TableCell>

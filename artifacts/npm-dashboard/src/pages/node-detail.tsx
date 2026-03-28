@@ -102,6 +102,90 @@ interface EnvironmentResponse {
   fanSensors: EnvironmentSensor[];
 }
 
+interface HardwareComponent {
+  id: string;
+  entityIndex: number;
+  parentIndex?: number | null;
+  containedInIndex?: number | null;
+  entityClass?: string | null;
+  name: string;
+  description?: string | null;
+  vendor?: string | null;
+  model?: string | null;
+  serialNumber?: string | null;
+  assetTag?: string | null;
+  hardwareRevision?: string | null;
+  firmwareVersion?: string | null;
+  softwareVersion?: string | null;
+  isFieldReplaceable?: string | null;
+  source?: string | null;
+  updatedAt: string;
+}
+
+interface HardwareInventoryResponse {
+  nodeId: string;
+  summary: {
+    totalComponents: number;
+    chassisCount: number;
+    moduleCount: number;
+    powerSupplyCount: number;
+    fanTrayCount: number;
+  };
+  components: HardwareComponent[];
+}
+
+interface SnmpDiagnosticAttempt {
+  strategy: "scalar" | "table";
+  oid: string;
+  status: "ok" | "empty" | "error" | "ignored";
+  value?: number | null;
+  error?: string | null;
+}
+
+interface SnmpDiagnosticsResponse {
+  nodeId: string;
+  target: string;
+  hasCredential: boolean;
+  message?: string;
+  credential?: {
+    id: string;
+    name: string;
+    version: string;
+    port: number;
+    timeoutMs: number;
+    retries: number;
+  };
+  diagnostics?: {
+    resolvedVendor?: string | null;
+    resolvedModel?: string | null;
+    identity: {
+      sysName?: string;
+      sysDescr?: string;
+      sysObjectId?: string;
+      uptime?: number;
+      interfaceCount?: number;
+    } | null;
+    profile: {
+      id?: string;
+      vendor?: string;
+      family?: string;
+      inventorySources: string[];
+      environmentSources: string[];
+    };
+    cpu: {
+      selectedValue?: number | null;
+      vendorValue?: number | null;
+      genericValue?: number | null;
+      attempts: SnmpDiagnosticAttempt[];
+    };
+    memory: {
+      selectedValue?: number | null;
+      vendorValue?: number | null;
+      genericValue?: number | null;
+    };
+  };
+}
+
 interface MetricSeriesResponse {
   nodeId: string;
   metric: string;
@@ -243,6 +327,11 @@ function formatField(value?: string | null) {
   return value && value.trim().length > 0 ? value : "N/A";
 }
 
+function formatHardwareClass(value?: string | null) {
+  if (!value) return "unknown";
+  return value.replace(/-/g, " ");
+}
+
 function describeEndpoint(endpoint: CorrelatedEndpoint) {
   if (endpoint.kind === "managed-node") {
     return endpoint.managedNodeName || endpoint.managedNodeIp || endpoint.macAddress;
@@ -310,6 +399,30 @@ export default function NodeDetail() {
       const response = await fetch(`/api/nodes/${id}/environment`);
       if (!response.ok) {
         throw new Error(`Falha ao carregar sensores (${response.status})`);
+      }
+      return response.json();
+    },
+  });
+  const { data: hardwareData, isLoading: loadingHardware } = useQuery({
+    queryKey: ["/api/nodes/hardware", id],
+    enabled: Boolean(id),
+    refetchInterval: 15000,
+    queryFn: async (): Promise<HardwareInventoryResponse> => {
+      const response = await fetch(`/api/nodes/${id}/hardware`);
+      if (!response.ok) {
+        throw new Error(`Falha ao carregar hardware (${response.status})`);
+      }
+      return response.json();
+    },
+  });
+  const { data: snmpDiagnostics, isLoading: loadingSnmpDiagnostics } = useQuery({
+    queryKey: ["/api/nodes/snmp-diagnostics", id],
+    enabled: Boolean(id),
+    refetchInterval: 30000,
+    queryFn: async (): Promise<SnmpDiagnosticsResponse> => {
+      const response = await fetch(`/api/nodes/${id}/snmp-diagnostics`);
+      if (!response.ok) {
+        throw new Error(`Falha ao carregar diagnostico SNMP (${response.status})`);
       }
       return response.json();
     },
@@ -1144,6 +1257,169 @@ export default function NodeDetail() {
                       <TableRow>
                         <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
                           O dispositivo ainda nao expôs sensores via SNMP/ENTITY-SENSOR-MIB.
+                        </TableCell>
+                      </TableRow>
+                    ) : null}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="glass-panel border-border/50 mt-6">
+            <CardHeader>
+              <CardTitle>Diagnostico SNMP da CPU</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {loadingSnmpDiagnostics ? (
+                <div className="p-2 text-muted-foreground">Carregando diagnostico SNMP...</div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                    <div className="rounded-lg border border-border/50 p-4">
+                      <div className="text-xs uppercase tracking-wider text-muted-foreground">Vendor resolvido</div>
+                      <div className="mt-1 font-mono">{formatField(snmpDiagnostics?.diagnostics?.resolvedVendor)}</div>
+                    </div>
+                    <div className="rounded-lg border border-border/50 p-4">
+                      <div className="text-xs uppercase tracking-wider text-muted-foreground">Perfil aplicado</div>
+                      <div className="mt-1 font-mono">{formatField(snmpDiagnostics?.diagnostics?.profile.id)}</div>
+                    </div>
+                    <div className="rounded-lg border border-border/50 p-4">
+                      <div className="text-xs uppercase tracking-wider text-muted-foreground">Familia aplicada</div>
+                      <div className="mt-1 font-mono">{formatField(snmpDiagnostics?.diagnostics?.profile.family)}</div>
+                    </div>
+                    <div className="rounded-lg border border-border/50 p-4">
+                      <div className="text-xs uppercase tracking-wider text-muted-foreground">CPU selecionada</div>
+                      <div className="mt-1 font-mono">
+                        {snmpDiagnostics?.diagnostics?.cpu.selectedValue != null
+                          ? `${snmpDiagnostics.diagnostics.cpu.selectedValue.toFixed(2)}%`
+                          : "N/A"}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="rounded-lg border border-border/50 p-4 text-sm">
+                      <div><span className="text-muted-foreground">sysName:</span> {formatField(snmpDiagnostics?.diagnostics?.identity?.sysName)}</div>
+                      <div><span className="text-muted-foreground">sysObjectID:</span> <span className="font-mono">{formatField(snmpDiagnostics?.diagnostics?.identity?.sysObjectId)}</span></div>
+                      <div><span className="text-muted-foreground">Credencial:</span> {snmpDiagnostics?.credential?.name || "N/A"} ({snmpDiagnostics?.credential?.version || "N/A"})</div>
+                    </div>
+                    <div className="rounded-lg border border-border/50 p-4 text-sm">
+                      <div><span className="text-muted-foreground">CPU por vendor:</span> {snmpDiagnostics?.diagnostics?.cpu.vendorValue != null ? `${snmpDiagnostics.diagnostics.cpu.vendorValue.toFixed(2)}%` : "N/A"}</div>
+                      <div><span className="text-muted-foreground">CPU generica:</span> {snmpDiagnostics?.diagnostics?.cpu.genericValue != null ? `${snmpDiagnostics.diagnostics.cpu.genericValue.toFixed(2)}%` : "N/A"}</div>
+                      <div><span className="text-muted-foreground">Memoria selecionada:</span> {snmpDiagnostics?.diagnostics?.memory.selectedValue != null ? `${snmpDiagnostics.diagnostics.memory.selectedValue.toFixed(2)}%` : "N/A"}</div>
+                    </div>
+                  </div>
+
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Estrategia</TableHead>
+                        <TableHead>OID</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Valor</TableHead>
+                        <TableHead>Observacao</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {(snmpDiagnostics?.diagnostics?.cpu.attempts ?? []).map((attempt, index) => (
+                        <TableRow key={`${attempt.oid}-${index}`}>
+                          <TableCell className="capitalize">{attempt.strategy}</TableCell>
+                          <TableCell className="font-mono text-xs">{attempt.oid}</TableCell>
+                          <TableCell className="uppercase text-xs">{attempt.status}</TableCell>
+                          <TableCell className="font-mono">
+                            {attempt.value != null ? `${attempt.value.toFixed(2)}%` : "—"}
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">{attempt.error || "—"}</TableCell>
+                        </TableRow>
+                      ))}
+                      {(snmpDiagnostics?.diagnostics?.cpu.attempts ?? []).length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                            {snmpDiagnostics?.message || "Nenhum diagnostico SNMP disponivel para este no."}
+                          </TableCell>
+                        </TableRow>
+                      ) : null}
+                    </TableBody>
+                  </Table>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="glass-panel border-border/50 mt-6">
+            <CardHeader>
+              <CardTitle>Inventario fisico por componente</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+                <div className="rounded-lg border border-border/50 p-4">
+                  <div className="text-xs uppercase tracking-wider text-muted-foreground">Componentes</div>
+                  <div className="mt-1 text-2xl font-mono">{hardwareData?.summary.totalComponents ?? 0}</div>
+                </div>
+                <div className="rounded-lg border border-border/50 p-4">
+                  <div className="text-xs uppercase tracking-wider text-muted-foreground">Chassis</div>
+                  <div className="mt-1 text-2xl font-mono">{hardwareData?.summary.chassisCount ?? 0}</div>
+                </div>
+                <div className="rounded-lg border border-border/50 p-4">
+                  <div className="text-xs uppercase tracking-wider text-muted-foreground">Modulos</div>
+                  <div className="mt-1 text-2xl font-mono">{hardwareData?.summary.moduleCount ?? 0}</div>
+                </div>
+                <div className="rounded-lg border border-border/50 p-4">
+                  <div className="text-xs uppercase tracking-wider text-muted-foreground">Fontes/FANs</div>
+                  <div className="mt-1 text-2xl font-mono">
+                    {(hardwareData?.summary.powerSupplyCount ?? 0) + (hardwareData?.summary.fanTrayCount ?? 0)}
+                  </div>
+                </div>
+              </div>
+
+              {loadingHardware ? (
+                <div className="p-2 text-muted-foreground">Carregando inventario fisico...</div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Classe</TableHead>
+                      <TableHead>Nome</TableHead>
+                      <TableHead>Modelo / Serie</TableHead>
+                      <TableHead>Revisoes</TableHead>
+                      <TableHead>FRU</TableHead>
+                      <TableHead>Origem</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(hardwareData?.components ?? []).map((component) => (
+                      <TableRow key={component.id}>
+                        <TableCell className="capitalize">{formatHardwareClass(component.entityClass)}</TableCell>
+                        <TableCell>
+                          <div className="font-medium">{component.name}</div>
+                          <div className="text-xs text-muted-foreground">{component.description || "—"}</div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="font-mono text-sm">{component.model || "—"}</div>
+                          <div className="text-xs text-muted-foreground font-mono">
+                            SN: {component.serialNumber || "—"}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          <div>HW: {component.hardwareRevision || "—"}</div>
+                          <div>FW: {component.firmwareVersion || "—"}</div>
+                          <div>SW: {component.softwareVersion || "—"}</div>
+                        </TableCell>
+                        <TableCell className="uppercase text-xs">
+                          {component.isFieldReplaceable === "true"
+                            ? "Yes"
+                            : component.isFieldReplaceable === "false"
+                              ? "No"
+                              : "—"}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">{component.source || "—"}</TableCell>
+                      </TableRow>
+                    ))}
+                    {(hardwareData?.components ?? []).length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                          O dispositivo ainda nao expôs inventario fisico detalhado via ENTITY-MIB.
                         </TableCell>
                       </TableRow>
                     ) : null}

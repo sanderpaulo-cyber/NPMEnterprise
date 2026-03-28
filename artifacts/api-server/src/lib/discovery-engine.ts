@@ -1,11 +1,23 @@
 import { randomUUID } from "crypto";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
+  alertsTable,
   discoveryRunsTable,
+  flowsTable,
+  metricsTable,
   networkScopesTable,
+  nodeArpEntriesTable,
+  nodeEnvironmentSensorsTable,
+  nodeHardwareComponentsTable,
+  nodeInterfacesTable,
+  nodeMacEntriesTable,
+  nodePortObservationsTable,
+  nodePortProfilesTable,
+  nodeVlansTable,
   nodesTable,
   snmpCredentialsTable,
+  topologyEdgesTable,
   type DiscoveryRunRecord,
   type NetworkScopeRecord,
   type SnmpCredentialRecord,
@@ -22,6 +34,10 @@ type NodeKind = "router" | "switch" | "firewall" | "server" | "unknown";
 interface LiveRunState {
   id: string;
   cidr: string;
+  rangeStartIp?: string | null;
+  rangeEndIp?: string | null;
+  primaryRouterIp?: string | null;
+  primaryRouterName?: string | null;
   scopeId?: string | null;
   scopeName?: string | null;
   credentialId?: string | null;
@@ -37,10 +53,23 @@ interface LiveRunState {
 }
 
 export interface DiscoveryRunInput {
-  cidr: string;
+  cidr?: string | null;
+  rangeStartIp?: string | null;
+  rangeEndIp?: string | null;
+  primaryRouterIp?: string | null;
+  primaryRouterName?: string | null;
   scopeId?: string | null;
   scopeName?: string | null;
   credentialId?: string | null;
+}
+
+interface DiscoveryClearInput {
+  scopeId?: string | null;
+  cidr?: string | null;
+  rangeStartIp?: string | null;
+  rangeEndIp?: string | null;
+  primaryRouterIp?: string | null;
+  removeNodes?: boolean;
 }
 
 const liveRuns = new Map<string, LiveRunState>();
@@ -102,6 +131,68 @@ function expandCidr(cidr: string) {
   for (let current = network + 1; current < broadcast; current += 1) {
     hosts.push(intToIpv4(current >>> 0));
   }
+  return hosts;
+}
+
+function expandIpv4Range(startIp: string, endIp: string) {
+  const start = ipv4ToInt(startIp);
+  const end = ipv4ToInt(endIp);
+  if (end < start) {
+    throw new Error(`Range inválido: ${startIp} - ${endIp}`);
+  }
+
+  const hostCount = end - start + 1;
+  const maxHosts = Number.parseInt(
+    process.env.DISCOVERY_MAX_HOSTS_PER_RUN ?? `${DEFAULT_MAX_HOSTS}`,
+    10,
+  );
+  if (hostCount > maxHosts) {
+    throw new Error(
+      `Range ${startIp} - ${endIp} excede o limite atual de ${maxHosts} hosts por execução.`,
+    );
+  }
+
+  const hosts: string[] = [];
+  for (let current = start; current <= end; current += 1) {
+    hosts.push(intToIpv4(current >>> 0));
+  }
+  return hosts;
+}
+
+function buildTargetLabel(input: {
+  cidr?: string | null;
+  rangeStartIp?: string | null;
+  rangeEndIp?: string | null;
+}) {
+  if (input.cidr) return input.cidr;
+  if (input.rangeStartIp && input.rangeEndIp) {
+    return `${input.rangeStartIp}-${input.rangeEndIp}`;
+  }
+  return "discovery-target";
+}
+
+function buildHostList(input: {
+  cidr?: string | null;
+  rangeStartIp?: string | null;
+  rangeEndIp?: string | null;
+  primaryRouterIp?: string | null;
+}) {
+  let hosts =
+    input.rangeStartIp && input.rangeEndIp
+      ? expandIpv4Range(input.rangeStartIp, input.rangeEndIp)
+      : input.cidr
+        ? expandCidr(input.cidr)
+        : [];
+
+  if (hosts.length === 0) {
+    throw new Error("É necessário informar um CIDR ou um range válido para discovery.");
+  }
+
+  if (input.primaryRouterIp) {
+    ipv4ToInt(input.primaryRouterIp);
+    hosts = [input.primaryRouterIp, ...hosts.filter((host) => host !== input.primaryRouterIp)];
+  }
+
   return hosts;
 }
 
@@ -187,13 +278,28 @@ async function upsertDiscoveredNode(input: {
   credential?: SnmpCredentialRecord | null;
   snmpIdentity?: Awaited<ReturnType<typeof fetchSnmpIdentity>>;
   scopeId?: string | null;
+  primaryRouterIp?: string | null;
+  primaryRouterName?: string | null;
 }) {
-  const { ipAddress, pingOk, credential, snmpIdentity, latencyMs, scopeId } = input;
-  const name = snmpIdentity?.sysName?.trim() || ipAddress;
+  const {
+    ipAddress,
+    pingOk,
+    credential,
+    snmpIdentity,
+    latencyMs,
+    scopeId,
+    primaryRouterIp,
+    primaryRouterName,
+  } = input;
+  const isPrimaryRouter = primaryRouterIp != null && ipAddress === primaryRouterIp;
+  const name =
+    snmpIdentity?.sysName?.trim() ||
+    (isPrimaryRouter ? primaryRouterName?.trim() : undefined) ||
+    ipAddress;
   const sysDescription = snmpIdentity?.sysDescr?.trim() || null;
   const interfaceCount = snmpIdentity?.interfaceCount ?? 0;
   const vendor = inferVendor(sysDescription);
-  const type = inferNodeType(sysDescription, interfaceCount);
+  const type = isPrimaryRouter ? "router" : inferNodeType(sysDescription, interfaceCount);
   const lastPolled = new Date();
 
   await db
@@ -276,11 +382,16 @@ async function resolveCredential(credentialId?: string | null) {
 async function executeRun(state: LiveRunState) {
   try {
     const credential = await resolveCredential(state.credentialId);
-    const hosts = expandCidr(state.cidr);
+    const hosts = buildHostList({
+      cidr: state.cidr,
+      rangeStartIp: state.rangeStartIp,
+      rangeEndIp: state.rangeEndIp,
+      primaryRouterIp: state.primaryRouterIp,
+    });
     state.status = "running";
     state.startedAt = new Date();
     state.hostsTotal = hosts.length;
-    state.message = `Varrendo ${hosts.length} hosts em ${state.cidr}`;
+    state.message = `Varrendo ${hosts.length} hosts em ${buildTargetLabel(state)}`;
     liveRuns.set(state.id, state);
     await persistRun(state);
 
@@ -311,6 +422,8 @@ async function executeRun(state: LiveRunState) {
               credential,
               snmpIdentity,
               scopeId: state.scopeId,
+              primaryRouterIp: state.primaryRouterIp,
+              primaryRouterName: state.primaryRouterName,
             });
             state.hostsDiscovered += 1;
           }
@@ -348,9 +461,14 @@ async function executeRun(state: LiveRunState) {
 }
 
 export async function queueDiscoveryRun(input: DiscoveryRunInput) {
+  const targetLabel = buildTargetLabel(input);
   const state: LiveRunState = {
     id: randomUUID(),
-    cidr: input.cidr,
+    cidr: input.cidr ?? targetLabel,
+    rangeStartIp: input.rangeStartIp ?? null,
+    rangeEndIp: input.rangeEndIp ?? null,
+    primaryRouterIp: input.primaryRouterIp ?? null,
+    primaryRouterName: input.primaryRouterName ?? null,
     scopeId: input.scopeId,
     scopeName: input.scopeName,
     credentialId: input.credentialId,
@@ -382,7 +500,7 @@ export async function queueDiscoveryRun(input: DiscoveryRunInput) {
 }
 
 export async function queueDiscoveryRunsForScopes(scopeIds: string[]) {
-  const scopes = await db
+  const scopes: NetworkScopeRecord[] = await db
     .select()
     .from(networkScopesTable)
     .where(inArray(networkScopesTable.id, scopeIds));
@@ -393,6 +511,10 @@ export async function queueDiscoveryRunsForScopes(scopeIds: string[]) {
     runs.push(
       await queueDiscoveryRun({
         cidr: scope.cidr,
+        rangeStartIp: scope.rangeStartIp,
+        rangeEndIp: scope.rangeEndIp,
+        primaryRouterIp: scope.primaryRouterIp,
+        primaryRouterName: scope.primaryRouterName,
         scopeId: scope.id,
         scopeName: scope.name,
         credentialId: scope.defaultCredentialId,
@@ -439,7 +561,7 @@ export async function getDiscoveryRun(runId: string) {
   return run ? mergeLive(run) : null;
 }
 
-export async function listNetworkScopes() {
+export async function listNetworkScopes(): Promise<NetworkScopeRecord[]> {
   return db
     .select()
     .from(networkScopesTable)
@@ -462,8 +584,8 @@ export function redactCredential<T extends SnmpCredentialRecord>(credential: T) 
   };
 }
 
-export async function getScope(scopeId: string) {
-  const [scope] = await db
+export async function getScope(scopeId: string): Promise<NetworkScopeRecord | null> {
+  const [scope]: NetworkScopeRecord[] = await db
     .select()
     .from(networkScopesTable)
     .where(eq(networkScopesTable.id, scopeId))
@@ -484,4 +606,105 @@ export async function countRunningDiscoveryRuns() {
   const runs = await listDiscoveryRuns(100);
   return runs.filter((run) => run.status === "queued" || run.status === "running")
     .length;
+}
+
+async function deleteNodesAndRelations(nodeIds: string[]) {
+  if (nodeIds.length === 0) return;
+
+  await db.delete(nodeEnvironmentSensorsTable).where(inArray(nodeEnvironmentSensorsTable.nodeId, nodeIds));
+  await db.delete(nodeHardwareComponentsTable).where(inArray(nodeHardwareComponentsTable.nodeId, nodeIds));
+  await db.delete(nodeInterfacesTable).where(inArray(nodeInterfacesTable.nodeId, nodeIds));
+  await db.delete(nodeArpEntriesTable).where(inArray(nodeArpEntriesTable.nodeId, nodeIds));
+  await db.delete(nodeMacEntriesTable).where(inArray(nodeMacEntriesTable.nodeId, nodeIds));
+  await db.delete(nodeVlansTable).where(inArray(nodeVlansTable.nodeId, nodeIds));
+  await db.delete(nodePortObservationsTable).where(inArray(nodePortObservationsTable.nodeId, nodeIds));
+  await db.delete(nodePortProfilesTable).where(inArray(nodePortProfilesTable.nodeId, nodeIds));
+  await db.delete(metricsTable).where(inArray(metricsTable.nodeId, nodeIds));
+  await db.delete(flowsTable).where(inArray(flowsTable.nodeId, nodeIds));
+  await db.delete(alertsTable).where(inArray(alertsTable.nodeId, nodeIds));
+  await db
+    .delete(topologyEdgesTable)
+    .where(or(inArray(topologyEdgesTable.sourceId, nodeIds), inArray(topologyEdgesTable.targetId, nodeIds)));
+  await db.delete(nodesTable).where(inArray(nodesTable.id, nodeIds));
+}
+
+export async function clearDiscoveryData(input: DiscoveryClearInput) {
+  const running = await countRunningDiscoveryRuns();
+  if (running > 0) {
+    throw new Error("Há discovery em execução. Aguarde a conclusão antes de limpar os resultados.");
+  }
+
+  const targetLabel = buildTargetLabel(input);
+  let removedRuns = 0;
+  let removedNodes = 0;
+
+  if (input.scopeId) {
+    const scopeRuns = await db
+      .select({ id: discoveryRunsTable.id })
+      .from(discoveryRunsTable)
+      .where(eq(discoveryRunsTable.scopeId, input.scopeId))
+      .limit(500);
+    removedRuns = scopeRuns.length;
+    for (const run of scopeRuns) {
+      liveRuns.delete(run.id);
+    }
+    await db.delete(discoveryRunsTable).where(eq(discoveryRunsTable.scopeId, input.scopeId));
+
+    if (input.removeNodes !== false) {
+      const nodes = await db
+        .select({ id: nodesTable.id })
+        .from(nodesTable)
+        .where(eq(nodesTable.discoveryScopeId, input.scopeId));
+      removedNodes = nodes.length;
+      await deleteNodesAndRelations(nodes.map((node) => node.id));
+    }
+
+    await db
+      .update(networkScopesTable)
+      .set({ lastRunAt: null })
+      .where(eq(networkScopesTable.id, input.scopeId));
+  } else {
+    const targetRuns = await db
+      .select({ id: discoveryRunsTable.id })
+      .from(discoveryRunsTable)
+      .where(and(isNull(discoveryRunsTable.scopeId), eq(discoveryRunsTable.cidr, targetLabel)))
+      .limit(500);
+    removedRuns = targetRuns.length;
+    for (const run of targetRuns) {
+      liveRuns.delete(run.id);
+    }
+    await db
+      .delete(discoveryRunsTable)
+      .where(and(isNull(discoveryRunsTable.scopeId), eq(discoveryRunsTable.cidr, targetLabel)));
+
+    if (input.removeNodes !== false) {
+      const hostSet = new Set(
+        buildHostList({
+          cidr: input.cidr ?? null,
+          rangeStartIp: input.rangeStartIp ?? null,
+          rangeEndIp: input.rangeEndIp ?? null,
+          primaryRouterIp: input.primaryRouterIp ?? null,
+        }),
+      );
+      const nodes = await db
+        .select({
+          id: nodesTable.id,
+          ipAddress: nodesTable.ipAddress,
+          discoveryScopeId: nodesTable.discoveryScopeId,
+        })
+        .from(nodesTable);
+      const targetNodeIds = nodes
+        .filter((node) => node.discoveryScopeId == null && hostSet.has(node.ipAddress))
+        .map((node) => node.id);
+      removedNodes = targetNodeIds.length;
+      await deleteNodesAndRelations(targetNodeIds);
+    }
+  }
+
+  return {
+    removedRuns,
+    removedNodes,
+    target: targetLabel,
+    mode: input.scopeId ? "scope" : "target",
+  };
 }

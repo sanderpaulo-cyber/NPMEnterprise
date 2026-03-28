@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
+  Eraser,
   KeyRound,
   Loader2,
   Network,
@@ -32,6 +33,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import {
+  clearDiscovery,
   createCredential,
   createScope,
   deleteCredential,
@@ -52,6 +54,28 @@ function formatDate(value?: string | null) {
   return new Date(value).toLocaleString();
 }
 
+function formatScopeTarget(scope: {
+  cidr?: string | null;
+  rangeStartIp?: string | null;
+  rangeEndIp?: string | null;
+}) {
+  if (scope.cidr) return scope.cidr;
+  if (scope.rangeStartIp && scope.rangeEndIp) {
+    return `${scope.rangeStartIp} - ${scope.rangeEndIp}`;
+  }
+  return "—";
+}
+
+function formatPrimaryRouter(scope: {
+  primaryRouterIp?: string | null;
+  primaryRouterName?: string | null;
+}) {
+  if (!scope.primaryRouterIp) return "—";
+  return scope.primaryRouterName
+    ? `${scope.primaryRouterName} (${scope.primaryRouterIp})`
+    : scope.primaryRouterIp;
+}
+
 function renderStatus(run: DiscoveryRun) {
   const palette: Record<DiscoveryRun["status"], string> = {
     queued: "text-warning",
@@ -68,11 +92,21 @@ export default function DiscoveryPage() {
   const { toast } = useToast();
   const [scopeDialogOpen, setScopeDialogOpen] = useState(false);
   const [credentialDialogOpen, setCredentialDialogOpen] = useState(false);
+  const [adhocTargetMode, setAdhocTargetMode] = useState<"cidr" | "range">("cidr");
   const [adhocCidr, setAdhocCidr] = useState("");
+  const [adhocRangeStart, setAdhocRangeStart] = useState("");
+  const [adhocRangeEnd, setAdhocRangeEnd] = useState("");
+  const [adhocPrimaryRouterIp, setAdhocPrimaryRouterIp] = useState("");
+  const [adhocPrimaryRouterName, setAdhocPrimaryRouterName] = useState("");
   const [adhocCredentialId, setAdhocCredentialId] = useState("none");
   const [scopeForm, setScopeForm] = useState({
     name: "",
+    targetMode: "cidr",
     cidr: "",
+    rangeStartIp: "",
+    rangeEndIp: "",
+    primaryRouterIp: "",
+    primaryRouterName: "",
     site: "",
     description: "",
     priority: "100",
@@ -126,7 +160,12 @@ export default function DiscoveryPage() {
       setScopeDialogOpen(false);
       setScopeForm({
         name: "",
+        targetMode: "cidr",
         cidr: "",
+        rangeStartIp: "",
+        rangeEndIp: "",
+        primaryRouterIp: "",
+        primaryRouterName: "",
         site: "",
         description: "",
         priority: "100",
@@ -223,6 +262,24 @@ export default function DiscoveryPage() {
     },
   });
 
+  const clearDiscoveryMutation = useMutation({
+    mutationFn: clearDiscovery,
+    onSuccess: async (result) => {
+      await refreshAll();
+      toast({
+        title: "Discovery limpo",
+        description: result.message,
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Falha ao limpar discovery",
+        description: error instanceof Error ? error.message : "Erro ao limpar discovery.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const enabledScopeIds = useMemo(
     () => (scopesQuery.data?.scopes ?? []).filter((scope) => scope.enabled).map((scope) => scope.id),
     [scopesQuery.data?.scopes],
@@ -238,6 +295,79 @@ export default function DiscoveryPage() {
     };
   }, [credentialsQuery.data?.credentials.length, runsQuery.data?.running, runsQuery.data?.runs, scopesQuery.data?.scopes.length]);
 
+  function handleAdhocRun() {
+    if (adhocTargetMode === "cidr") {
+      const cidr = adhocCidr.trim();
+      if (!cidr) {
+        toast({
+          title: "Informe o CIDR",
+          description: "Preencha o CIDR ou troque para o modo por range.",
+          variant: "destructive",
+        });
+        return;
+      }
+      queueRunsMutation.mutate({
+        cidrs: [cidr],
+        primaryRouterIp: adhocPrimaryRouterIp.trim() || null,
+        primaryRouterName: adhocPrimaryRouterName.trim() || null,
+        credentialId: adhocCredentialId === "none" ? null : adhocCredentialId,
+      });
+      return;
+    }
+
+    const rangeStartIp = adhocRangeStart.trim();
+    const rangeEndIp = adhocRangeEnd.trim();
+    if (!rangeStartIp || !rangeEndIp) {
+      toast({
+        title: "Informe o range",
+        description: "Preencha IP inicial e IP final para executar por intervalo.",
+        variant: "destructive",
+      });
+      return;
+    }
+    queueRunsMutation.mutate({
+      rangeStartIp,
+      rangeEndIp,
+      primaryRouterIp: adhocPrimaryRouterIp.trim() || null,
+      primaryRouterName: adhocPrimaryRouterName.trim() || null,
+      credentialId: adhocCredentialId === "none" ? null : adhocCredentialId,
+    });
+  }
+
+  function handleAdhocClear() {
+    if (adhocTargetMode === "cidr") {
+      const cidr = adhocCidr.trim();
+      if (!cidr) {
+        toast({
+          title: "Informe o CIDR",
+          description: "Preencha o CIDR que deseja limpar.",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (!window.confirm(`Limpar resultados de discovery e dispositivos descobertos em ${cidr}?`)) {
+        return;
+      }
+      clearDiscoveryMutation.mutate({ cidr, removeNodes: true });
+      return;
+    }
+
+    const rangeStartIp = adhocRangeStart.trim();
+    const rangeEndIp = adhocRangeEnd.trim();
+    if (!rangeStartIp || !rangeEndIp) {
+      toast({
+        title: "Informe o range",
+        description: "Preencha IP inicial e final do range que deseja limpar.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!window.confirm(`Limpar resultados de discovery e dispositivos descobertos no range ${rangeStartIp} - ${rangeEndIp}?`)) {
+      return;
+    }
+    clearDiscoveryMutation.mutate({ rangeStartIp, rangeEndIp, removeNodes: true });
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -246,8 +376,8 @@ export default function DiscoveryPage() {
             <Radar className="h-8 w-8 text-primary" /> Discovery Corporativo
           </h1>
           <p className="text-muted-foreground text-sm mt-1 max-w-3xl">
-            Consola operacional para cadastrar escopos, credenciais SNMP e executar descobertas reais por CIDR.
-            Esta base já faz varredura ICMP real e tenta enriquecimento SNMP em hosts responsivos ou acessíveis.
+            Consola operacional para cadastrar escopos, credenciais SNMP e executar descobertas reais por CIDR ou range.
+            Também permite definir o roteador principal do ambiente para priorizar a coleta do equipamento que concentra VLANs e rotas.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -320,18 +450,56 @@ export default function DiscoveryPage() {
 
       <Card className="glass-panel border-border/50">
         <CardHeader>
-          <CardTitle className="text-lg font-mono">Execução avulsa por CIDR</CardTitle>
+          <CardTitle className="text-lg font-mono">Execução avulsa por alvo</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-4 md:grid-cols-[2fr_1fr_auto]">
-          <div className="space-y-2">
-            <Label htmlFor="adhoc-cidr">CIDR</Label>
-            <Input
-              id="adhoc-cidr"
-              value={adhocCidr}
-              onChange={(event) => setAdhocCidr(event.target.value)}
-              placeholder="10.10.20.0/24"
-            />
+        <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+          <div className="space-y-2 xl:col-span-1">
+            <Label>Modo</Label>
+            <Select
+              value={adhocTargetMode}
+              onValueChange={(value) => setAdhocTargetMode(value as "cidr" | "range")}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="cidr">CIDR</SelectItem>
+                <SelectItem value="range">Range</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
+          {adhocTargetMode === "cidr" ? (
+            <div className="space-y-2 xl:col-span-2">
+              <Label htmlFor="adhoc-cidr">CIDR</Label>
+              <Input
+                id="adhoc-cidr"
+                value={adhocCidr}
+                onChange={(event) => setAdhocCidr(event.target.value)}
+                placeholder="10.10.20.0/24"
+              />
+            </div>
+          ) : (
+            <>
+              <div className="space-y-2 xl:col-span-1">
+                <Label htmlFor="adhoc-range-start">IP inicial</Label>
+                <Input
+                  id="adhoc-range-start"
+                  value={adhocRangeStart}
+                  onChange={(event) => setAdhocRangeStart(event.target.value)}
+                  placeholder="10.10.20.10"
+                />
+              </div>
+              <div className="space-y-2 xl:col-span-1">
+                <Label htmlFor="adhoc-range-end">IP final</Label>
+                <Input
+                  id="adhoc-range-end"
+                  value={adhocRangeEnd}
+                  onChange={(event) => setAdhocRangeEnd(event.target.value)}
+                  placeholder="10.10.20.200"
+                />
+              </div>
+            </>
+          )}
           <div className="space-y-2">
             <Label>Credencial SNMP</Label>
             <Select value={adhocCredentialId} onValueChange={setAdhocCredentialId}>
@@ -348,19 +516,41 @@ export default function DiscoveryPage() {
               </SelectContent>
             </Select>
           </div>
-          <div className="flex items-end">
-            <Button
-              className="w-full"
-              disabled={!adhocCidr.trim() || queueRunsMutation.isPending}
-              onClick={() =>
-                queueRunsMutation.mutate({
-                  cidrs: [adhocCidr.trim()],
-                  credentialId: adhocCredentialId === "none" ? null : adhocCredentialId,
-                })
-              }
-            >
-              <Play className="h-4 w-4 mr-2" /> Rodar
-            </Button>
+          <div className="space-y-2">
+            <Label>Roteador principal</Label>
+            <Input
+              value={adhocPrimaryRouterIp}
+              onChange={(event) => setAdhocPrimaryRouterIp(event.target.value)}
+              placeholder="10.10.20.1"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Nome do roteador</Label>
+            <Input
+              value={adhocPrimaryRouterName}
+              onChange={(event) => setAdhocPrimaryRouterName(event.target.value)}
+              placeholder="Core-Gateway"
+            />
+          </div>
+          <div className="flex items-end xl:col-span-1">
+            <div className="flex w-full gap-2">
+              <Button
+                className="flex-1"
+                disabled={queueRunsMutation.isPending}
+                onClick={handleAdhocRun}
+              >
+                <Play className="h-4 w-4 mr-2" /> Rodar
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1"
+                disabled={clearDiscoveryMutation.isPending}
+                onClick={handleAdhocClear}
+              >
+                <Eraser className="h-4 w-4 mr-2" /> Limpar
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -374,7 +564,8 @@ export default function DiscoveryPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Nome</TableHead>
-                <TableHead>CIDR</TableHead>
+                <TableHead>Alvo</TableHead>
+                <TableHead>Roteador principal</TableHead>
                 <TableHead>Site</TableHead>
                 <TableHead>Prioridade</TableHead>
                 <TableHead>Última execução</TableHead>
@@ -385,7 +576,8 @@ export default function DiscoveryPage() {
               {(scopesQuery.data?.scopes ?? []).map((scope) => (
                 <TableRow key={scope.id}>
                   <TableCell className="font-medium">{scope.name}</TableCell>
-                  <TableCell className="font-mono">{scope.cidr}</TableCell>
+                  <TableCell className="font-mono">{formatScopeTarget(scope)}</TableCell>
+                  <TableCell>{formatPrimaryRouter(scope)}</TableCell>
                   <TableCell>{scope.site || "—"}</TableCell>
                   <TableCell>{scope.priority}</TableCell>
                   <TableCell>{formatDate(scope.lastRunAt)}</TableCell>
@@ -397,6 +589,18 @@ export default function DiscoveryPage() {
                         onClick={() => queueRunsMutation.mutate({ scopeIds: [scope.id] })}
                       >
                         <Play className="h-4 w-4 mr-1" /> Rodar
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={clearDiscoveryMutation.isPending}
+                        onClick={() => {
+                          if (window.confirm(`Limpar resultados de discovery e dispositivos descobertos do escopo ${scope.name}?`)) {
+                            clearDiscoveryMutation.mutate({ scopeId: scope.id, removeNodes: true });
+                          }
+                        }}
+                      >
+                        <Eraser className="h-4 w-4 mr-1" /> Limpar
                       </Button>
                       <Button
                         variant="ghost"
@@ -417,7 +621,7 @@ export default function DiscoveryPage() {
               ))}
               {(scopesQuery.data?.scopes ?? []).length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                  <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
                     Nenhum escopo cadastrado.
                   </TableCell>
                 </TableRow>
@@ -530,16 +734,38 @@ export default function DiscoveryPage() {
           <DialogHeader>
             <DialogTitle>Novo escopo</DialogTitle>
             <DialogDescription>
-              Defina a sub-rede a ser descoberta e, opcionalmente, a credencial padrão SNMP.
+              Defina o alvo por CIDR ou range de IPs e, se necessário, o roteador principal que concentra VLANs e rotas do ambiente.
             </DialogDescription>
           </DialogHeader>
           <form
             className="grid gap-4"
             onSubmit={(event) => {
               event.preventDefault();
+              const cidr =
+                scopeForm.targetMode === "cidr" ? scopeForm.cidr.trim() : undefined;
+              const rangeStartIp =
+                scopeForm.targetMode === "range"
+                  ? scopeForm.rangeStartIp.trim()
+                  : undefined;
+              const rangeEndIp =
+                scopeForm.targetMode === "range"
+                  ? scopeForm.rangeEndIp.trim()
+                  : undefined;
+              if (!cidr && !(rangeStartIp && rangeEndIp)) {
+                toast({
+                  title: "Informe um alvo válido",
+                  description: "Preencha o CIDR ou o range inicial/final.",
+                  variant: "destructive",
+                });
+                return;
+              }
               createScopeMutation.mutate({
                 name: scopeForm.name.trim(),
-                cidr: scopeForm.cidr.trim(),
+                cidr: cidr || null,
+                rangeStartIp: rangeStartIp || null,
+                rangeEndIp: rangeEndIp || null,
+                primaryRouterIp: scopeForm.primaryRouterIp.trim() || null,
+                primaryRouterName: scopeForm.primaryRouterName.trim() || undefined,
                 site: scopeForm.site.trim() || undefined,
                 description: scopeForm.description.trim() || undefined,
                 priority: Number(scopeForm.priority) || 100,
@@ -556,14 +782,59 @@ export default function DiscoveryPage() {
             </div>
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
-                <Label>CIDR</Label>
-                <Input value={scopeForm.cidr} onChange={(event) => setScopeForm((prev) => ({ ...prev, cidr: event.target.value }))} placeholder="10.0.10.0/24" required />
+                <Label>Modo do alvo</Label>
+                <Select
+                  value={scopeForm.targetMode}
+                  onValueChange={(value) =>
+                    setScopeForm((prev) => ({ ...prev, targetMode: value }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cidr">CIDR</SelectItem>
+                    <SelectItem value="range">Range</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-2">
                 <Label>Site</Label>
                 <Input value={scopeForm.site} onChange={(event) => setScopeForm((prev) => ({ ...prev, site: event.target.value }))} placeholder="DC-SP" />
               </div>
             </div>
+            {scopeForm.targetMode === "cidr" ? (
+              <div className="space-y-2">
+                <Label>CIDR</Label>
+                <Input
+                  value={scopeForm.cidr}
+                  onChange={(event) => setScopeForm((prev) => ({ ...prev, cidr: event.target.value }))}
+                  placeholder="10.0.10.0/24"
+                  required
+                />
+              </div>
+            ) : (
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>IP inicial</Label>
+                  <Input
+                    value={scopeForm.rangeStartIp}
+                    onChange={(event) => setScopeForm((prev) => ({ ...prev, rangeStartIp: event.target.value }))}
+                    placeholder="10.0.10.10"
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>IP final</Label>
+                  <Input
+                    value={scopeForm.rangeEndIp}
+                    onChange={(event) => setScopeForm((prev) => ({ ...prev, rangeEndIp: event.target.value }))}
+                    placeholder="10.0.10.200"
+                    required
+                  />
+                </div>
+              </div>
+            )}
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
                 <Label>Prioridade</Label>
@@ -589,6 +860,24 @@ export default function DiscoveryPage() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Roteador principal</Label>
+                <Input
+                  value={scopeForm.primaryRouterIp}
+                  onChange={(event) => setScopeForm((prev) => ({ ...prev, primaryRouterIp: event.target.value }))}
+                  placeholder="10.0.10.1"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Nome do roteador</Label>
+                <Input
+                  value={scopeForm.primaryRouterName}
+                  onChange={(event) => setScopeForm((prev) => ({ ...prev, primaryRouterName: event.target.value }))}
+                  placeholder="Gateway-Core"
+                />
               </div>
             </div>
             <div className="space-y-2">

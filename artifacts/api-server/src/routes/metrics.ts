@@ -1,9 +1,16 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { metricsTable, nodesTable } from "@workspace/db/schema";
-import { eq, and, gte, lte, desc, sql } from "drizzle-orm";
+import { eq, and, gte, lte, desc, asc, sql } from "drizzle-orm";
 
 const router: IRouter = Router();
+
+function resolveBucketMs(bucket?: string) {
+  if (bucket === "1m") return 60_000;
+  if (bucket === "5m") return 300_000;
+  if (bucket === "1h") return 3_600_000;
+  return 86_400_000;
+}
 
 router.get("/top-n", async (req, res) => {
   try {
@@ -56,33 +63,64 @@ router.get("/:nodeId", async (req, res) => {
       gte(metricsTable.timestamp, fromDate),
       lte(metricsTable.timestamp, toDate),
     ];
+    const bucketMs = resolveBucketMs(bucket);
 
-    const bucketMs = bucket === "1m" ? 60000 : bucket === "5m" ? 300000 : bucket === "1h" ? 3600000 : 86400000;
-    const bucketSql = sql<string>`to_timestamp(floor(extract(epoch from ${metricsTable.timestamp}) / ${bucketMs / 1000}) * ${bucketMs / 1000})`;
-
-    const data = await db
+    const rows = await db
       .select({
-        timestamp: bucketSql,
-        value: sql<number>`AVG(${metricsTable.value})::float`,
-        min: sql<number>`MIN(${metricsTable.min})::float`,
-        max: sql<number>`MAX(${metricsTable.max})::float`,
-        avg: sql<number>`AVG(${metricsTable.avg})::float`,
+        timestamp: metricsTable.timestamp,
+        value: metricsTable.value,
+        min: metricsTable.min,
+        max: metricsTable.max,
+        avg: metricsTable.avg,
       })
       .from(metricsTable)
       .where(and(...conditions))
-      .groupBy(bucketSql)
-      .orderBy(bucketSql)
-      .limit(500);
+      .orderBy(asc(metricsTable.timestamp))
+      .limit(5000);
+
+    const bucketMap = new Map<
+      number,
+      { timestamp: string; values: number[]; mins: number[]; maxes: number[]; avgs: number[] }
+    >();
+
+    for (const row of rows) {
+      const timestamp = row.timestamp instanceof Date ? row.timestamp : new Date(row.timestamp);
+      const bucketStart = Math.floor(timestamp.getTime() / bucketMs) * bucketMs;
+      const current = bucketMap.get(bucketStart) ?? {
+        timestamp: new Date(bucketStart).toISOString(),
+        values: [],
+        mins: [],
+        maxes: [],
+        avgs: [],
+      };
+      if (row.value != null) current.values.push(row.value);
+      if (row.min != null) current.mins.push(row.min);
+      if (row.max != null) current.maxes.push(row.max);
+      if (row.avg != null) current.avgs.push(row.avg);
+      bucketMap.set(bucketStart, current);
+    }
+
+    const avgOf = (values: number[]) =>
+      values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+    const minOf = (values: number[]) =>
+      values.length > 0 ? values.reduce((min, value) => (value < min ? value : min), values[0]) : 0;
+    const maxOf = (values: number[]) =>
+      values.length > 0 ? values.reduce((max, value) => (value > max ? value : max), values[0]) : 0;
+
+    const data = Array.from(bucketMap.entries())
+      .sort((left, right) => left[0] - right[0])
+      .slice(-500)
+      .map(([, item]) => ({
+        timestamp: item.timestamp,
+        value: parseFloat(avgOf(item.values).toFixed(3)),
+        min: parseFloat(minOf(item.mins).toFixed(3)),
+        max: parseFloat(maxOf(item.maxes).toFixed(3)),
+        avg: parseFloat(avgOf(item.avgs).toFixed(3)),
+      }));
 
     res.json({
       nodeId, metric, bucket,
-      data: data.map(d => ({
-        timestamp: d.timestamp,
-        value: parseFloat((d.value ?? 0).toFixed(3)),
-        min: parseFloat((d.min ?? 0).toFixed(3)),
-        max: parseFloat((d.max ?? 0).toFixed(3)),
-        avg: parseFloat((d.avg ?? 0).toFixed(3)),
-      })),
+      data,
     });
   } catch (err) {
     req.log.error({ err }, "Failed to get node metrics");

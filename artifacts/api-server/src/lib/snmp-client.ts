@@ -1,5 +1,9 @@
 import * as snmp from "net-snmp";
 import type { SnmpCredentialRecord } from "@workspace/db/schema";
+import {
+  resolveSnmpVendorProfile,
+  type SnmpVendorProfile,
+} from "./snmp-mib-profiles";
 
 type SnmpSession = any;
 type SnmpVarbind = any;
@@ -30,6 +34,7 @@ export interface SnmpPollSnapshot extends SnmpIdentity {
   fanHealthyCount?: number | null;
   temperatureSensors?: SnmpEnvironmentSensor[];
   fanSensors?: SnmpEnvironmentSensor[];
+  hardwareComponents?: SnmpHardwareComponent[];
   interfaceInBps?: number | null;
   interfaceOutBps?: number | null;
   interfaces?: SnmpInterfaceSnapshot[];
@@ -107,6 +112,57 @@ export interface SnmpEnvironmentSensor {
   source?: string | null;
 }
 
+export interface SnmpDiagnosticAttempt {
+  strategy: "scalar" | "table";
+  oid: string;
+  status: "ok" | "empty" | "error" | "ignored";
+  value?: number | null;
+  error?: string | null;
+}
+
+export interface SnmpDiagnostics {
+  target: string;
+  identity: SnmpIdentity | null;
+  resolvedVendor?: string | null;
+  resolvedModel?: string | null;
+  profile: {
+    id?: string;
+    vendor?: string;
+    family?: string;
+    inventorySources: string[];
+    environmentSources: string[];
+  };
+  cpu: {
+    selectedValue?: number | null;
+    vendorValue?: number | null;
+    genericValue?: number | null;
+    attempts: SnmpDiagnosticAttempt[];
+  };
+  memory: {
+    selectedValue?: number | null;
+    vendorValue?: number | null;
+    genericValue?: number | null;
+  };
+}
+
+export interface SnmpHardwareComponent {
+  entityIndex: number;
+  parentIndex?: number | null;
+  containedInIndex?: number | null;
+  entityClass?: string | null;
+  name: string;
+  description?: string | null;
+  vendor?: string | null;
+  model?: string | null;
+  serialNumber?: string | null;
+  assetTag?: string | null;
+  hardwareRevision?: string | null;
+  firmwareVersion?: string | null;
+  softwareVersion?: string | null;
+  isFieldReplaceable?: boolean | null;
+  source?: string | null;
+}
+
 const SYSTEM_OIDS = {
   sysDescr: "1.3.6.1.2.1.1.1.0",
   sysObjectId: "1.3.6.1.2.1.1.2.0",
@@ -157,6 +213,7 @@ const CDP_CACHE_DEVICE_PORT_BASE = "1.3.6.1.4.1.9.9.23.1.2.1.1.7";
 const CDP_CACHE_PLATFORM_BASE = "1.3.6.1.4.1.9.9.23.1.2.1.1.8";
 const ENTITY_PHYSICAL_DESCR_BASE = "1.3.6.1.2.1.47.1.1.1.1.2";
 const ENTITY_PHYSICAL_CLASS_BASE = "1.3.6.1.2.1.47.1.1.1.1.5";
+const ENTITY_PHYSICAL_CONTAINED_IN_BASE = "1.3.6.1.2.1.47.1.1.1.1.4";
 const ENTITY_PHYSICAL_NAME_BASE = "1.3.6.1.2.1.47.1.1.1.1.7";
 const ENTITY_PHYSICAL_HARDWARE_REV_BASE = "1.3.6.1.2.1.47.1.1.1.1.8";
 const ENTITY_PHYSICAL_FIRMWARE_REV_BASE = "1.3.6.1.2.1.47.1.1.1.1.9";
@@ -164,6 +221,7 @@ const ENTITY_PHYSICAL_SOFTWARE_REV_BASE = "1.3.6.1.2.1.47.1.1.1.1.10";
 const ENTITY_PHYSICAL_SERIAL_NUM_BASE = "1.3.6.1.2.1.47.1.1.1.1.11";
 const ENTITY_PHYSICAL_MFG_NAME_BASE = "1.3.6.1.2.1.47.1.1.1.1.12";
 const ENTITY_PHYSICAL_MODEL_NAME_BASE = "1.3.6.1.2.1.47.1.1.1.1.13";
+const ENTITY_PHYSICAL_IS_FRU_BASE = "1.3.6.1.2.1.47.1.1.1.1.16";
 const ENTITY_PHYSICAL_ASSET_ID_BASE = "1.3.6.1.2.1.47.1.1.1.1.15";
 const ENTITY_SENSOR_TYPE_BASE = "1.3.6.1.2.1.99.1.1.1.1.1";
 const ENTITY_SENSOR_SCALE_BASE = "1.3.6.1.2.1.99.1.1.1.1.2";
@@ -323,17 +381,10 @@ function parseDot1dMacIndex(suffix: string) {
 function inferVendorAndModel(input: { sysDescr?: string; sysObjectId?: string }) {
   const sysDescr = input.sysDescr?.trim();
   const text = sysDescr?.toLowerCase() ?? "";
-  let vendor: string | null = null;
-  if (text.includes("cisco")) vendor = "Cisco";
-  else if (text.includes("dell")) vendor = "Dell";
-  else if (text.includes("juniper")) vendor = "Juniper";
-  else if (text.includes("arista")) vendor = "Arista";
-  else if (text.includes("fortinet") || text.includes("fortigate")) vendor = "Fortinet";
-  else if (text.includes("palo alto")) vendor = "Palo Alto";
-  else if (text.includes("mikrotik")) vendor = "MikroTik";
-  else if (text.includes("aruba") || text.includes("procurve") || text.includes("hewlett")) vendor = "HPE/Aruba";
-  else if (text.includes("windows")) vendor = "Microsoft";
-  else if (text.includes("linux")) vendor = "Linux";
+  const profileVendor = resolveSnmpVendorProfile(input)?.vendor ?? null;
+  let vendor: string | null = profileVendor;
+  if (!vendor && text.includes("windows")) vendor = "Microsoft";
+  else if (!vendor && text.includes("linux")) vendor = "Linux";
 
   let model: string | null = null;
   if (sysDescr) {
@@ -390,6 +441,43 @@ function rankEntityClass(value: number | undefined) {
     default:
       return 0;
   }
+}
+
+function mapEntityClass(value: number | undefined) {
+  switch (value) {
+    case 1:
+      return "other";
+    case 2:
+      return "unknown";
+    case 3:
+      return "chassis";
+    case 4:
+      return "backplane";
+    case 5:
+      return "container";
+    case 6:
+      return "power-supply";
+    case 7:
+      return "fan";
+    case 8:
+      return "sensor";
+    case 9:
+      return "module";
+    case 10:
+      return "port";
+    case 11:
+      return "stack";
+    case 12:
+      return "cpu";
+    default:
+      return undefined;
+  }
+}
+
+function mapIsFieldReplaceable(value: number | undefined) {
+  if (value === 1) return true;
+  if (value === 2) return false;
+  return null;
 }
 
 function pickEntityRootIndex(classes: Map<string, unknown>, names: Map<string, unknown>, descr: Map<string, unknown>) {
@@ -478,6 +566,95 @@ async function readEntityInventory(
     };
   } catch {
     return {};
+  }
+}
+
+async function readEntityComponents(
+  session: SnmpSession,
+  fingerprint: { vendor?: string | null },
+) {
+  try {
+    const [
+      classes,
+      containedIn,
+      names,
+      descr,
+      hardwareRevs,
+      firmwareRevs,
+      softwareRevs,
+      serials,
+      manufacturers,
+      models,
+      assetIds,
+      fruValues,
+    ] = await Promise.all([
+      readTableAsMap(session, ENTITY_PHYSICAL_CLASS_BASE),
+      readTableAsMap(session, ENTITY_PHYSICAL_CONTAINED_IN_BASE),
+      readTableAsMap(session, ENTITY_PHYSICAL_NAME_BASE),
+      readTableAsMap(session, ENTITY_PHYSICAL_DESCR_BASE),
+      readTableAsMap(session, ENTITY_PHYSICAL_HARDWARE_REV_BASE),
+      readTableAsMap(session, ENTITY_PHYSICAL_FIRMWARE_REV_BASE),
+      readTableAsMap(session, ENTITY_PHYSICAL_SOFTWARE_REV_BASE),
+      readTableAsMap(session, ENTITY_PHYSICAL_SERIAL_NUM_BASE),
+      readTableAsMap(session, ENTITY_PHYSICAL_MFG_NAME_BASE),
+      readTableAsMap(session, ENTITY_PHYSICAL_MODEL_NAME_BASE),
+      readTableAsMap(session, ENTITY_PHYSICAL_ASSET_ID_BASE),
+      readTableAsMap(session, ENTITY_PHYSICAL_IS_FRU_BASE),
+    ]);
+
+    const components: SnmpHardwareComponent[] = [];
+    for (const [index, rawClass] of classes.entries()) {
+      const entityIndex = toNumber(index);
+      const name = firstPresentText(
+        toText(names.get(index)),
+        toText(descr.get(index)),
+        `Entity ${index}`,
+      );
+      if (entityIndex == null || !name) continue;
+
+      const component: SnmpHardwareComponent = {
+        entityIndex,
+        parentIndex: toNumber(containedIn.get(index)) ?? null,
+        containedInIndex: toNumber(containedIn.get(index)) ?? null,
+        entityClass: mapEntityClass(toNumber(rawClass)) ?? null,
+        name,
+        description: firstPresentText(toText(descr.get(index))) ?? null,
+        vendor: firstPresentText(
+          toText(manufacturers.get(index)),
+          fingerprint.vendor ?? undefined,
+        ) ?? null,
+        model: firstPresentText(toText(models.get(index))) ?? null,
+        serialNumber: firstPresentText(toText(serials.get(index))) ?? null,
+        assetTag: firstPresentText(toText(assetIds.get(index))) ?? null,
+        hardwareRevision: firstPresentText(toText(hardwareRevs.get(index))) ?? null,
+        firmwareVersion: firstPresentText(toText(firmwareRevs.get(index))) ?? null,
+        softwareVersion: firstPresentText(toText(softwareRevs.get(index))) ?? null,
+        isFieldReplaceable: mapIsFieldReplaceable(toNumber(fruValues.get(index))),
+        source: "ENTITY-MIB",
+      };
+
+      const hasUsefulData =
+        component.entityClass != null ||
+        component.serialNumber != null ||
+        component.model != null ||
+        component.firmwareVersion != null ||
+        component.hardwareRevision != null ||
+        component.softwareVersion != null ||
+        component.assetTag != null ||
+        component.name.trim().length > 0;
+      if (hasUsefulData) {
+        components.push(component);
+      }
+    }
+
+    return components.sort((left, right) => {
+      const leftParent = left.parentIndex ?? 0;
+      const rightParent = right.parentIndex ?? 0;
+      if (leftParent !== rightParent) return leftParent - rightParent;
+      return left.entityIndex - right.entityIndex;
+    });
+  } catch {
+    return [];
   }
 }
 
@@ -648,26 +825,203 @@ async function readEnvironmentSensors(session: SnmpSession) {
 
 async function readVendorSpecificCpu(
   session: SnmpSession,
-  vendor?: string | null,
+  profile?: SnmpVendorProfile,
 ) {
-  if (vendor === "Cisco") {
-    return (
-      (await readCpuUsageFromBases(session, [
-        CISCO_CPU_5MIN_REV_BASE,
-        CISCO_CPU_5MIN_BASE,
-      ])) ?? undefined
-    );
+  if (!profile) {
+    return undefined;
+  }
+
+  const scalarValue = await readFirstAvailableScalar(session, profile.cpuScalarOids ?? []);
+  if (
+    scalarValue != null &&
+    !(profile.ignoreZeroCpuValues === true && scalarValue <= 0)
+  ) {
+    return Number(scalarValue.toFixed(2));
+  }
+
+  if ((profile.cpuTableBases?.length ?? 0) > 0) {
+    const tableValue = await readCpuUsageFromBases(session, profile.cpuTableBases ?? []);
+    if (
+      tableValue != null &&
+      !(profile.ignoreZeroCpuValues === true && tableValue <= 0)
+    ) {
+      return tableValue;
+    }
+  }
+
+  if (scalarValue != null && profile.ignoreZeroCpuValues !== true) {
+    return Number(scalarValue.toFixed(2));
   }
   return undefined;
 }
 
+async function probeScalarOid(session: SnmpSession, oid: string) {
+  try {
+    const [varbind] = await sessionGet(session, [oid]);
+    const value = toNumber(readValue(varbind));
+    if (value == null) {
+      return {
+        value: undefined,
+        attempt: {
+          strategy: "scalar" as const,
+          oid,
+          status: "empty" as const,
+          value: null,
+          error: null,
+        },
+      };
+    }
+    return {
+      value,
+      attempt: {
+        strategy: "scalar" as const,
+        oid,
+        status: "ok" as const,
+        value,
+        error: null,
+      },
+    };
+  } catch (error) {
+    return {
+      value: undefined,
+      attempt: {
+        strategy: "scalar" as const,
+        oid,
+        status: "error" as const,
+        value: null,
+        error: error instanceof Error ? error.message : "SNMP request failed",
+      },
+    };
+  }
+}
+
+async function probeCpuTableBase(session: SnmpSession, base: string) {
+  try {
+    const varbinds = await sessionSubtree(session, base);
+    const values = varbinds
+      .map((varbind) => toNumber(readValue(varbind)))
+      .filter((value): value is number => value != null);
+    const avg = average(values);
+    if (avg == null) {
+      return {
+        value: undefined,
+        attempt: {
+          strategy: "table" as const,
+          oid: base,
+          status: "empty" as const,
+          value: null,
+          error: null,
+        },
+      };
+    }
+    const value = Number(avg.toFixed(2));
+    return {
+      value,
+      attempt: {
+        strategy: "table" as const,
+        oid: base,
+        status: "ok" as const,
+        value,
+        error: null,
+      },
+    };
+  } catch (error) {
+    return {
+      value: undefined,
+      attempt: {
+        strategy: "table" as const,
+        oid: base,
+        status: "error" as const,
+        value: null,
+        error: error instanceof Error ? error.message : "SNMP subtree failed",
+      },
+    };
+  }
+}
+
+async function diagnoseCpuCollection(
+  session: SnmpSession,
+  profile?: SnmpVendorProfile,
+) {
+  const attempts: SnmpDiagnosticAttempt[] = [];
+  let vendorValue: number | undefined;
+  let genericValue: number | undefined;
+
+  for (const oid of profile?.cpuScalarOids ?? []) {
+    const probe = await probeScalarOid(session, oid);
+    const ignored =
+      profile?.ignoreZeroCpuValues === true &&
+      probe.value != null &&
+      probe.value <= 0;
+    attempts.push(
+      ignored
+        ? { ...probe.attempt, status: "ignored", error: "Zero value ignored by vendor profile" }
+        : probe.attempt,
+    );
+    if (!ignored && probe.value != null && vendorValue == null) {
+      vendorValue = Number(probe.value.toFixed(2));
+    }
+  }
+
+  for (const base of profile?.cpuTableBases ?? []) {
+    const probe = await probeCpuTableBase(session, base);
+    const ignored =
+      profile?.ignoreZeroCpuValues === true &&
+      probe.value != null &&
+      probe.value <= 0;
+    attempts.push(
+      ignored
+        ? { ...probe.attempt, status: "ignored", error: "Zero value ignored by vendor profile" }
+        : probe.attempt,
+    );
+    if (!ignored && probe.value != null && vendorValue == null) {
+      vendorValue = Number(probe.value.toFixed(2));
+    }
+  }
+
+  const genericProbe = await probeCpuTableBase(session, CPU_LOAD_BASE);
+  attempts.push(genericProbe.attempt);
+  if (genericProbe.value != null) {
+    genericValue = Number(genericProbe.value.toFixed(2));
+  }
+
+  return {
+    vendorValue,
+    genericValue,
+    selectedValue: choosePreferredPercentMetric(vendorValue, genericValue) ?? null,
+    attempts,
+  };
+}
+
 async function readVendorSpecificMemory(
   session: SnmpSession,
-  vendor?: string | null,
+  profile?: SnmpVendorProfile,
 ) {
-  if (vendor === "Cisco") {
-    return readCiscoMemoryUsage(session);
+  if (!profile) {
+    return undefined;
   }
+
+  const percentValue = await readFirstAvailableScalar(session, profile.memoryPercentOids ?? []);
+  if (percentValue != null) {
+    return Number(percentValue.toFixed(2));
+  }
+
+  const usedFreeValue = await readMemoryUsageFromUsedFreePairs(
+    session,
+    profile.memoryUsedFreePairs ?? [],
+  );
+  if (usedFreeValue != null) {
+    return usedFreeValue;
+  }
+
+  const totalFreeValue = await readMemoryUsageFromTotalFreePairs(
+    session,
+    profile.memoryTotalFreePairs ?? [],
+  );
+  if (totalFreeValue != null) {
+    return totalFreeValue;
+  }
+
   return undefined;
 }
 
@@ -734,6 +1088,88 @@ function sessionSubtree(
 function average(values: number[]) {
   if (values.length === 0) return undefined;
   return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function choosePreferredPercentMetric(
+  vendorSpecific: number | undefined,
+  generic: number | undefined,
+) {
+  if (vendorSpecific == null) {
+    return generic;
+  }
+  if (generic != null && generic > 0 && vendorSpecific <= 0) {
+    return generic;
+  }
+  return vendorSpecific;
+}
+
+async function readSingleOidValue(session: SnmpSession, oid: string) {
+  try {
+    const [varbind] = await sessionGet(session, [oid]);
+    return toNumber(readValue(varbind));
+  } catch {
+    return undefined;
+  }
+}
+
+async function readFirstAvailableScalar(session: SnmpSession, oids: string[]) {
+  for (const oid of oids) {
+    const value = await readSingleOidValue(session, oid);
+    if (value != null) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+async function readMemoryUsageFromUsedFreePairs(
+  session: SnmpSession,
+  pairs: Array<{ used: string; free: string }>,
+) {
+  for (const pair of pairs) {
+    const [used, free] = await Promise.all([
+      readTableScalarOrEntry(session, pair.used),
+      readTableScalarOrEntry(session, pair.free),
+    ]);
+    if (used == null || free == null) continue;
+    const total = used + free;
+    if (total <= 0) continue;
+    return Number(((used / total) * 100).toFixed(2));
+  }
+  return undefined;
+}
+
+async function readMemoryUsageFromTotalFreePairs(
+  session: SnmpSession,
+  pairs: Array<{ total: string; free: string }>,
+) {
+  for (const pair of pairs) {
+    const [total, free] = await Promise.all([
+      readTableScalarOrEntry(session, pair.total),
+      readTableScalarOrEntry(session, pair.free),
+    ]);
+    if (total == null || free == null || total <= 0 || free > total) continue;
+    const used = total - free;
+    return Number(((used / total) * 100).toFixed(2));
+  }
+  return undefined;
+}
+
+async function readTableScalarOrEntry(session: SnmpSession, oid: string) {
+  const scalar = await readSingleOidValue(session, oid);
+  if (scalar != null) {
+    return scalar;
+  }
+  try {
+    const values = await readTableAsMap(session, oid);
+    const numbers = Array.from(values.values())
+      .map((value) => toNumber(value))
+      .filter((value): value is number => value != null);
+    if (numbers.length === 0) return undefined;
+    return numbers.reduce((best, current) => (current > best ? current : best), numbers[0]);
+  } catch {
+    return undefined;
+  }
 }
 
 async function readCpuUsage(session: SnmpSession) {
@@ -1280,9 +1716,14 @@ export async function fetchSnmpPollSnapshot(
       sysDescr: identity.sysDescr,
       sysObjectId: identity.sysObjectId,
     });
+    const vendorProfile = resolveSnmpVendorProfile({
+      sysDescr: identity.sysDescr,
+      sysObjectId: identity.sysObjectId,
+    });
 
     const [
       inventory,
+      hardwareComponents,
       environment,
       vendorCpu,
       genericCpu,
@@ -1297,10 +1738,11 @@ export async function fetchSnmpPollSnapshot(
     ] =
       await Promise.all([
         readEntityInventory(session, fingerprint),
+        readEntityComponents(session, fingerprint),
         readEnvironmentSensors(session),
-        readVendorSpecificCpu(session, fingerprint.vendor),
+        readVendorSpecificCpu(session, vendorProfile),
         readCpuUsage(session),
-        readVendorSpecificMemory(session, fingerprint.vendor),
+        readVendorSpecificMemory(session, vendorProfile),
         readMemoryUsage(session),
         readInterfaceRates(session, cacheKey),
         readInterfaceInventory(session, cacheKey),
@@ -1325,8 +1767,9 @@ export async function fetchSnmpPollSnapshot(
       softwareVersion: inventory.softwareVersion ?? null,
       hardwareRevision: inventory.hardwareRevision ?? null,
       manufactureDate: inventory.manufactureDate ?? null,
-      cpuUsage: vendorCpu ?? genericCpu ?? null,
-      memUsage: vendorMem ?? genericMem ?? null,
+      hardwareComponents,
+      cpuUsage: choosePreferredPercentMetric(vendorCpu, genericCpu) ?? null,
+      memUsage: choosePreferredPercentMetric(vendorMem, genericMem) ?? null,
       cpuTemperatureC: environment.cpuTemperatureC ?? null,
       inletTemperatureC: environment.inletTemperatureC ?? null,
       fanCount: environment.fanCount ?? 0,
@@ -1341,6 +1784,61 @@ export async function fetchSnmpPollSnapshot(
       arpEntries,
       macEntries,
       vlans,
+    };
+  } catch {
+    return null;
+  } finally {
+    session.close();
+  }
+}
+
+export async function fetchSnmpDiagnostics(
+  target: string,
+  credential: SnmpCredentialRecord,
+): Promise<SnmpDiagnostics | null> {
+  const session = createSession(target, credential);
+  try {
+    const base = await sessionGet(session, Object.values(SYSTEM_OIDS));
+    const identity: SnmpIdentity = {
+      sysDescr: toText(readValue(base[0])),
+      sysObjectId: toText(readValue(base[1])),
+      uptime: toNumber(readValue(base[2])),
+      sysName: toText(readValue(base[3])),
+      interfaceCount: toNumber(readValue(base[4])),
+    };
+    const fingerprint = inferVendorAndModel({
+      sysDescr: identity.sysDescr,
+      sysObjectId: identity.sysObjectId,
+    });
+    const profile = resolveSnmpVendorProfile({
+      sysDescr: identity.sysDescr,
+      sysObjectId: identity.sysObjectId,
+    });
+
+    const [cpu, vendorMemory, genericMemory] = await Promise.all([
+      diagnoseCpuCollection(session, profile),
+      readVendorSpecificMemory(session, profile),
+      readMemoryUsage(session),
+    ]);
+
+    return {
+      target,
+      identity,
+      resolvedVendor: fingerprint.vendor,
+      resolvedModel: fingerprint.model,
+      profile: {
+        id: profile?.id,
+        vendor: profile?.vendor,
+        family: profile?.family,
+        inventorySources: profile?.inventorySources ?? [],
+        environmentSources: profile?.environmentSources ?? [],
+      },
+      cpu,
+      memory: {
+        selectedValue: choosePreferredPercentMetric(vendorMemory, genericMemory) ?? null,
+        vendorValue: vendorMemory ?? null,
+        genericValue: genericMemory ?? null,
+      },
     };
   } catch {
     return null;

@@ -42,7 +42,11 @@ export const discoveryRunStatusEnum = pgEnum("discovery_run_status", [
 export const networkScopesTable = pgTable("network_scopes", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
-  cidr: text("cidr").notNull().unique(),
+  cidr: text("cidr").unique(),
+  rangeStartIp: text("range_start_ip"),
+  rangeEndIp: text("range_end_ip"),
+  primaryRouterIp: text("primary_router_ip"),
+  primaryRouterName: text("primary_router_name"),
   site: text("site"),
   description: text("description"),
   enabled: boolean("enabled").default(true).notNull(),
