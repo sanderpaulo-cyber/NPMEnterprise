@@ -192,6 +192,56 @@ Acessos padrao:
 5. Cadastre dispositivos manualmente ou use a pagina de descoberta.
 6. Configure credenciais SNMP para ampliar o inventario e a telemetria.
 
+## Novidades da versao
+
+- descoberta com suporte a `CIDR`, range de IP e roteador principal
+- limpeza de resultados de discovery para reexecutar coletas produtivas
+- remocao em lote em `Network Nodes` com alternancia entre `Remove selected` e `Remove all`
+- inventario tecnico ampliado com firmware, software, serial, service tag e sensores ambientais
+- inventario fisico por componente com `ENTITY-MIB` para chassis, modulos, fontes e FANs
+- biblioteca local de MIBs em `docs/mibs/` com catalogo por fabricante
+- diagnostico SNMP por no com perfil aplicado, familia resolvida e OIDs de CPU tentados
+- resolucao automatica de perfis SNMP por familia para ambientes mistos
+
+## Checklist de validacao por fabricante
+
+Use este checklist apos cadastrar as credenciais SNMP e aguardar alguns ciclos de polling.
+
+### Cisco
+
+- confirmar se o diagnostico SNMP resolveu a familia correta: `Cisco NX-OS`, `Cisco IOS/IOS-XE` ou `Cisco ASA/Firepower`
+- validar `sysObjectID` e `sysDescr` na tela de detalhe do no
+- confirmar leitura de `CPU`, `memoria`, interfaces e vizinhos `LLDP/CDP`
+- verificar se firmware, serial e modulos aparecem no inventario tecnico/fisico
+
+### Aruba / HPE
+
+- confirmar se a familia caiu em `Aruba CX`, `ArubaOS-Switch/ProCurve` ou `HPE/Aruba Generic`
+- validar se CPU vem por OID proprietario ou por `HOST-RESOURCES-MIB`
+- conferir sensores de temperatura e FAN quando o equipamento expuser `ENTITY-SENSOR-MIB`
+- revisar VLANs, MAC table e correlacao L2 nas portas
+
+### Fortinet / FortiGate
+
+- confirmar se a familia foi resolvida como `FortiGate`
+- validar CPU e memoria no detalhe do no
+- conferir `sysDescr`, versao de software e inventario tecnico
+- revisar se a firewall expone sensores ambientais e interfaces via SNMP
+
+### Dell
+
+- confirmar se a familia foi resolvida como `Dell N-Series`, `Dell PowerConnect` ou `Dell Generic`
+- se CPU continuar `null`, abrir o card de diagnostico e verificar quais OIDs foram tentados
+- validar memoria, inventario tecnico e inventario fisico por componente
+- conferir se os valores antigos zerados nao reaparecem no grafico
+
+### Juniper, Arista, MikroTik, Palo Alto e demais
+
+- conferir a familia resolvida no card de diagnostico SNMP
+- validar se `CPU`, `memoria`, interfaces e sensores aparecem apos alguns ciclos de polling
+- revisar `sysObjectID` e `sysDescr` para identificar se vale criar um perfil mais especifico
+- se a familia cair em um perfil generico, usar o diagnostico do no para orientar novos OIDs
+
 ## Funcionalidades principais
 
 ### Dashboard
