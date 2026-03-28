@@ -1,5 +1,10 @@
 # NetworkSentinelPRO
 
+[![CI](https://github.com/sanderpaulo-cyber/NPMEnterprise/actions/workflows/ci.yml/badge.svg)](https://github.com/sanderpaulo-cyber/NPMEnterprise/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Node.js](https://img.shields.io/badge/Node.js-22%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![pnpm](https://img.shields.io/badge/pnpm-workspace-F69220?logo=pnpm&logoColor=white)](https://pnpm.io/)
+
 Plataforma de monitoracao e operacao de rede com API Node.js/Express, dashboard React/Vite, persistencia em PostgreSQL e coleta por ICMP/SNMP.
 
 Licenca: `MIT`
@@ -54,6 +59,11 @@ flowchart LR
 |-- LICENSE
 `-- README.md
 ```
+
+Documentos auxiliares:
+
+- guia de contribuicao: `CONTRIBUTING.md`
+- roadmap tecnico: `docs/ROADMAP.md`
 
 ## Requisitos
 
@@ -329,7 +339,7 @@ O dashboard gera saida em `artifacts/npm-dashboard/dist/public` e a API gera sai
 
 Este projeto esta licenciado sob a licenca MIT. Veja `LICENSE`.
 
-## Proximos passos recomendados
+## Colaboracao e roadmap
 
-- adicionar um playbook inicial de descoberta e cadastro
-- documentar perfis SNMP especificos por fabricante
+- guia para contribuidores: `CONTRIBUTING.md`
+- backlog tecnico inicial: `docs/ROADMAP.md`
