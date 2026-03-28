@@ -2,6 +2,8 @@
 
 Plataforma de monitoracao e operacao de rede com API Node.js/Express, dashboard React/Vite, persistencia em PostgreSQL e coleta por ICMP/SNMP.
 
+Licenca: `MIT`
+
 O projeto foi organizado como monorepo `pnpm workspace` e hoje cobre:
 
 - inventario de dispositivos de rede
@@ -20,6 +22,39 @@ O projeto foi organizado como monorepo `pnpm workspace` e hoje cobre:
 - `lib/api-client-react`: client React gerado para parte da API
 - `lib/api-zod`: contratos Zod usados na API
 
+### Visao de alto nivel
+
+```mermaid
+flowchart LR
+  User[Operador] --> Web[Dashboard React/Vite]
+  Web -->|HTTP /api| Api[API Express]
+  Web -->|WebSocket| Ws[/api/ws]
+  Api --> Db[(PostgreSQL)]
+  Api --> Poller[Poller ICMP/SNMP]
+  Poller --> Network[Dispositivos de rede]
+  Poller --> Db
+  Api --> Ws
+```
+
+### Estrutura do repositorio
+
+```text
+.
+|-- artifacts/
+|   |-- api-server/
+|   |-- npm-dashboard/
+|   `-- mockup-sandbox/
+|-- lib/
+|   |-- api-client-react/
+|   |-- api-zod/
+|   `-- db/
+|-- scripts/
+|-- .env.example
+|-- .gitignore
+|-- LICENSE
+`-- README.md
+```
+
 ## Requisitos
 
 - Node.js 22+ recomendado
@@ -36,6 +71,17 @@ git clone https://github.com/sanderpaulo-cyber/NPMEnterprise.git
 cd NPMEnterprise
 corepack enable
 corepack pnpm install
+```
+
+### Setup rapido
+
+Depois da instalacao, o caminho mais curto para subir o ambiente local e:
+
+```bash
+cp .env.example .env
+corepack pnpm --filter @workspace/db run push
+corepack pnpm dev:api
+corepack pnpm dev:web
 ```
 
 ## Configuracao
@@ -113,6 +159,18 @@ Acessos padrao:
 - Healthcheck: [http://127.0.0.1:8080/api/healthz](http://127.0.0.1:8080/api/healthz)
 - WebSocket: `ws://127.0.0.1:8080/api/ws`
 
+## Modulos da interface
+
+- `/`: dashboard executivo e operacional
+- `/nodes`: inventario e cadastro de dispositivos
+- `/nodes/:id`: detalhe tecnico do dispositivo
+- `/discovery`: descoberta em sub-redes
+- `/topology`: topologia e interligacoes
+- `/alerts`: alertas e tratativas
+- `/poller`: estado do motor de coleta
+- `/netpath`: analise de caminho
+- `/flows`: visao de fluxos
+
 ## Fluxo recomendado para primeiro uso
 
 1. Ajuste o `.env`.
@@ -184,6 +242,23 @@ Banco:
 corepack pnpm --filter @workspace/db run push
 ```
 
+Validacao local:
+
+```bash
+corepack pnpm typecheck
+corepack pnpm build
+```
+
+## Integracao continua
+
+O repositorio inclui workflow de GitHub Actions em `.github/workflows/ci.yml` para:
+
+- instalar dependencias
+- executar `pnpm typecheck`
+- executar `pnpm build`
+
+O workflow roda em `push` para `main` e em `pull_request`.
+
 ## Troubleshooting
 
 ### `pnpm` nao reconhecido
@@ -244,6 +319,10 @@ O dashboard gera saida em `artifacts/npm-dashboard/dist/public` e a API gera sai
 - nao versione o `.env`
 - nao publique comunidades SNMP reais no repositorio
 - prefira credenciais dedicadas de leitura para SNMP
+
+## Licenca
+
+Este projeto esta licenciado sob a licenca MIT. Veja `LICENSE`.
 
 ## Proximos passos recomendados
 
