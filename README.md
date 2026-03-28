@@ -146,6 +146,8 @@ Suba a API em um terminal:
 corepack pnpm dev:api
 ```
 
+O comando acima agora roda a API em modo watch com rebuild e restart automatico quando houver mudancas em `artifacts/api-server/src`.
+
 Suba o dashboard em outro terminal:
 
 ```bash
@@ -256,6 +258,9 @@ O repositorio inclui workflow de GitHub Actions em `.github/workflows/ci.yml` pa
 - instalar dependencias
 - executar `pnpm typecheck`
 - executar `pnpm build`
+- provisionar PostgreSQL temporario
+- aplicar o schema com Drizzle
+- subir a API e validar `/api/healthz`
 
 O workflow roda em `push` para `main` e em `pull_request`.
 
