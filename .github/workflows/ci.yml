@@ -61,6 +61,7 @@ jobs:
       BASE_PATH: /
       ENABLE_DEMO_SEED: "false"
       NETWORK_POLLING_MODE: simulated
+      DISCOVERY_MAX_PARALLEL_RUNS: 1
       DISCOVERY_MAX_HOSTS_PER_RUN: 256
       DISCOVERY_HOST_CONCURRENCY: 8
       LOG_LEVEL: info
@@ -92,14 +93,14 @@ jobs:
       - name: Start API
         run: pnpm --filter @workspace/api-server run start > api.log 2>&1 &
 
-      - name: Wait for healthcheck
+      - name: Wait for readiness
         run: |
           for i in {1..30}; do
-            if curl -fsS http://127.0.0.1:8080/api/healthz; then
+            if curl -fsS http://127.0.0.1:8080/api/readyz; then
               exit 0
             fi
             sleep 2
           done
-          echo "API did not become healthy in time"
+          echo "API did not become ready in time"
           cat api.log
           exit 1

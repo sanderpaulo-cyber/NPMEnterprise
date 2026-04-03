@@ -114,6 +114,9 @@ Exemplo minimo:
 DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/networksentinel
 
 API_PORT=8080
+PGPOOL_MAX=20
+PGPOOL_IDLE_TIMEOUT_MS=30000
+PGPOOL_CONNECT_TIMEOUT_MS=10000
 WEB_PORT=20112
 API_PROXY_TARGET=http://127.0.0.1:8080
 BASE_PATH=/
@@ -123,6 +126,9 @@ NETWORK_POLLING_MODE=icmp
 NETWORK_POLL_INTERVAL_MS=30000
 NETWORK_POLL_BATCH_SIZE=6
 NETWORK_DETAILED_POLL_INTERVAL_MS=300000
+DISCOVERY_MAX_PARALLEL_RUNS=1
+DISCOVERY_API_RATE_LIMIT_WINDOW_MS=60000
+DISCOVERY_API_RATE_LIMIT_MAX=10
 DISCOVERY_MAX_HOSTS_PER_RUN=512
 DISCOVERY_HOST_CONCURRENCY=6
 LOG_LEVEL=info
@@ -132,6 +138,9 @@ LOG_LEVEL=info
 
 - `DATABASE_URL`: string de conexao com o PostgreSQL
 - `API_PORT`: porta da API
+- `PGPOOL_MAX`: conexoes maximas do pool PostgreSQL
+- `PGPOOL_IDLE_TIMEOUT_MS`: tempo maximo de idle das conexoes do pool
+- `PGPOOL_CONNECT_TIMEOUT_MS`: timeout de conexao com o PostgreSQL
 - `WEB_PORT`: porta do dashboard Vite
 - `API_PROXY_TARGET`: alvo do proxy `/api` usado pelo dashboard
 - `BASE_PATH`: base path da aplicacao web
@@ -140,6 +149,9 @@ LOG_LEVEL=info
 - `NETWORK_POLL_INTERVAL_MS`: cadencia base do scheduler de coleta
 - `NETWORK_POLL_BATCH_SIZE`: quantidade de nos consultados em paralelo por lote
 - `NETWORK_DETAILED_POLL_INTERVAL_MS`: intervalo detalhado usado como base para o perfil padrao
+- `DISCOVERY_MAX_PARALLEL_RUNS`: quantas execucoes de discovery podem rodar ao mesmo tempo
+- `DISCOVERY_API_RATE_LIMIT_WINDOW_MS`: janela de protecao contra flood de requests de discovery
+- `DISCOVERY_API_RATE_LIMIT_MAX`: quantidade maxima de requests pesados de discovery por janela
 - `DISCOVERY_MAX_HOSTS_PER_RUN`: limite de IPs por execucao de descoberta
 - `DISCOVERY_HOST_CONCURRENCY`: concorrencia da descoberta
 - `LOG_LEVEL`: nivel de log da API
@@ -163,12 +175,24 @@ Perfis de coleta por no:
 Crie o banco no PostgreSQL e depois aplique o schema:
 
 ```bash
-corepack pnpm --filter @workspace/db run push
+corepack pnpm db:push
 ```
 
 Se estiver usando o exemplo acima, o banco esperado e `networksentinel`.
 
 ## Como executar
+
+Fluxo local mais simples:
+
+```bash
+corepack pnpm install
+corepack pnpm db:push
+corepack pnpm dev
+```
+
+Esse comando da raiz sobe API e dashboard juntos, recicla as portas de desenvolvimento e reduz erros de inicializacao duplicada.
+
+Ou, se preferir operar separado:
 
 Suba a API em um terminal:
 
@@ -188,8 +212,132 @@ Acessos padrao:
 
 - Dashboard: [http://localhost:20112](http://localhost:20112)
 - API: [http://127.0.0.1:8080](http://127.0.0.1:8080)
-- Healthcheck: [http://127.0.0.1:8080/api/healthz](http://127.0.0.1:8080/api/healthz)
+- Liveness: [http://127.0.0.1:8080/api/healthz](http://127.0.0.1:8080/api/healthz)
+- Readiness: [http://127.0.0.1:8080/api/readyz](http://127.0.0.1:8080/api/readyz)
 - WebSocket: `ws://127.0.0.1:8080/api/ws`
+
+`/api/healthz` valida que o processo HTTP esta vivo.
+
+`/api/readyz` valida banco de dados e poller, sendo o endpoint recomendado para balanceador, proxy reverso e troubleshooting operacional.
+
+## Roteiro operacional
+
+1. Instale dependencias com `corepack pnpm install`.
+2. Copie `.env.example` para `.env` e ajuste `DATABASE_URL`, portas e tuning de coleta.
+3. Garanta que o PostgreSQL esta acessivel a partir do host da API.
+4. Execute `corepack pnpm db:push` para aplicar o schema.
+5. Inicie o ambiente com `corepack pnpm dev`.
+6. Valide `GET /api/healthz` e `GET /api/readyz`.
+7. Abra o dashboard e comece a cadastrar nos ou rodar discovery.
+
+## Execucao para ambiente mais estavel
+
+Valide o build completo:
+
+```bash
+corepack pnpm typecheck
+corepack pnpm build
+```
+
+Suba os processos separadamente:
+
+```bash
+corepack pnpm start:api
+corepack pnpm start:web
+```
+
+Checklist minimo de operacao:
+
+- usar `NODE_ENV=production`
+- monitorar `GET /api/readyz`
+- validar `GET /api/poller/status`
+- manter `DATABASE_URL` fora do Git
+- revisar concorrencia de discovery e intervalos de polling antes de ambiente grande
+
+## Docker Compose
+
+Para subir PostgreSQL, API e dashboard em containers:
+
+```bash
+docker compose up --build
+```
+
+Servicos:
+
+- `postgres`: banco de dados com volume persistente
+- `api`: sobe a API, valida o banco e aplica `db:push` antes do start
+- `web`: sobe o dashboard com proxy `/api` apontando para o servico `api`
+
+Comandos uteis:
+
+```bash
+docker compose up --build
+docker compose down
+```
+
+## PM2
+
+Arquivo incluido:
+
+- `ecosystem.config.cjs`
+
+Uso:
+
+```bash
+pm2 start ecosystem.config.cjs
+pm2 status
+pm2 logs
+pm2 save
+```
+
+## systemd
+
+Arquivos incluidos:
+
+- `deploy/systemd/networksentinel-api.service`
+- `deploy/systemd/networksentinel-web.service`
+
+Fluxo sugerido em Linux:
+
+1. Copiar o projeto para `/opt/networksentinel`
+2. Ajustar `.env`
+3. Executar `corepack pnpm install && corepack pnpm build && corepack pnpm db:push`
+4. Copiar os arquivos `.service` para `/etc/systemd/system/`
+5. Rodar:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable networksentinel-api
+sudo systemctl enable networksentinel-web
+sudo systemctl start networksentinel-api
+sudo systemctl start networksentinel-web
+```
+
+## Backup e restore
+
+Backup do PostgreSQL:
+
+```bash
+corepack pnpm db:backup
+```
+
+Ou informando um caminho:
+
+```bash
+corepack pnpm db:backup backups/producao.dump
+```
+
+Restore:
+
+```bash
+corepack pnpm db:restore backups/producao.dump
+```
+
+Observacoes:
+
+- os scripts usam `pg_dump` e `pg_restore`
+- essas ferramentas precisam estar instaladas e no `PATH`
+- a pasta `backups/` e ignorada no Git
 
 ## Modulos da interface
 
@@ -312,8 +460,14 @@ Use este checklist apos cadastrar as credenciais SNMP e aguardar alguns ciclos d
 Na raiz:
 
 ```bash
+corepack pnpm dev
 corepack pnpm dev:api
 corepack pnpm dev:web
+corepack pnpm db:push
+corepack pnpm db:backup
+corepack pnpm db:restore backups/exemplo.dump
+corepack pnpm docker:up
+corepack pnpm docker:down
 corepack pnpm typecheck
 corepack pnpm build
 ```
@@ -340,7 +494,7 @@ O repositorio inclui workflow de GitHub Actions em `.github/workflows/ci.yml` pa
 - executar `pnpm build`
 - provisionar PostgreSQL temporario
 - aplicar o schema com Drizzle
-- subir a API e validar `/api/healthz`
+- subir a API e validar `/api/readyz`
 
 O workflow roda em `push` para `main` e em `pull_request`.
 
@@ -358,6 +512,25 @@ corepack pnpm install
 ### A API nao sobe por falta de porta
 
 Verifique se `API_PORT` ja esta em uso e altere a variavel no `.env`.
+
+### `readyz` retorna erro
+
+Verifique:
+
+- `DATABASE_URL`
+- se o PostgreSQL esta acessivel
+- se o poller foi iniciado
+- se houve erro de bootstrap nos logs da API
+
+### Discovery fica em fila ou falha apos restart
+
+- a API agora limita execucoes paralelas por `DISCOVERY_MAX_PARALLEL_RUNS`
+- requests pesados de discovery sao protegidos por rate limit
+- se a API reiniciar no meio de uma descoberta, as execucoes antigas sao marcadas como interrompidas e devem ser reenviadas
+
+### Backup ou restore falham
+
+Confirme se `pg_dump` e `pg_restore` estao instalados e disponiveis no `PATH`.
 
 ### O dashboard abre, mas a API esta indisponivel
 

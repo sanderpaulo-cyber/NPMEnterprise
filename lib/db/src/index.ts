@@ -20,7 +20,24 @@ if (!process.env.DATABASE_URL) {
   );
 }
 
-export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+function readEnvInt(name: string, fallback: number, min: number) {
+  const raw = process.env[name];
+  const parsed = Number.parseInt(raw ?? "", 10);
+  if (Number.isNaN(parsed)) return fallback;
+  return Math.max(min, parsed);
+}
+
+const poolMax = readEnvInt("PGPOOL_MAX", 20, 1);
+const idleTimeoutMillis = readEnvInt("PGPOOL_IDLE_TIMEOUT_MS", 30_000, 1_000);
+const connectionTimeoutMillis = readEnvInt("PGPOOL_CONNECT_TIMEOUT_MS", 10_000, 1_000);
+
+export const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: poolMax,
+  idleTimeoutMillis,
+  connectionTimeoutMillis,
+  allowExitOnIdle: process.env.PGPOOL_ALLOW_EXIT_ON_IDLE === "true",
+});
 export const db = drizzle(pool, { schema });
 
 export * from "./schema";

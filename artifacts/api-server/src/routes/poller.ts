@@ -10,6 +10,7 @@ router.get("/status", (_req, res) => {
   const successRate = status.totalPolled > 0 ? (status.successCount / status.totalPolled) * 100 : 100;
   res.json({
     running: status.running,
+    cycleInFlight: status.cycleInFlight,
     activeWorkers: status.activeWorkers,
     pollsPerSecond: status.pollsPerSecond,
     totalPolled: status.totalPolled,

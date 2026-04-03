@@ -30,6 +30,7 @@ import { fetchSnmpIdentity } from "./snmp-client";
 
 const DEFAULT_CONCURRENCY = 8;
 const DEFAULT_MAX_HOSTS = 1024;
+const DEFAULT_MAX_PARALLEL_RUNS = 1;
 
 type NodeKind = "router" | "switch" | "firewall" | "server" | "unknown";
 
@@ -75,6 +76,33 @@ interface DiscoveryClearInput {
 }
 
 const liveRuns = new Map<string, LiveRunState>();
+const queuedRunIds: string[] = [];
+const queuedRunIdsSet = new Set<string>();
+let activeDiscoveryRuns = 0;
+
+function getMaxParallelRuns() {
+  const raw = Number.parseInt(
+    process.env.DISCOVERY_MAX_PARALLEL_RUNS ?? `${DEFAULT_MAX_PARALLEL_RUNS}`,
+    10,
+  );
+  if (Number.isNaN(raw)) return DEFAULT_MAX_PARALLEL_RUNS;
+  return Math.max(1, raw);
+}
+
+function enqueueRun(state: LiveRunState) {
+  if (queuedRunIdsSet.has(state.id)) return;
+  queuedRunIds.push(state.id);
+  queuedRunIdsSet.add(state.id);
+}
+
+function dequeueRun(runId: string) {
+  if (!queuedRunIdsSet.has(runId)) return;
+  queuedRunIdsSet.delete(runId);
+  const index = queuedRunIds.indexOf(runId);
+  if (index >= 0) {
+    queuedRunIds.splice(index, 1);
+  }
+}
 
 function ipv4ToInt(ip: string) {
   const parts = ip.split(".").map((part) => Number.parseInt(part, 10));
@@ -462,6 +490,59 @@ async function executeRun(state: LiveRunState) {
   }
 }
 
+function scheduleQueuedRuns() {
+  const maxParallelRuns = getMaxParallelRuns();
+  while (activeDiscoveryRuns < maxParallelRuns && queuedRunIds.length > 0) {
+    const runId = queuedRunIds.shift();
+    if (!runId) continue;
+    queuedRunIdsSet.delete(runId);
+    const state = liveRuns.get(runId);
+    if (!state || state.status !== "queued") continue;
+
+    activeDiscoveryRuns += 1;
+    void executeRun(state).finally(() => {
+      activeDiscoveryRuns = Math.max(0, activeDiscoveryRuns - 1);
+      liveRuns.set(state.id, state);
+      scheduleQueuedRuns();
+    });
+  }
+}
+
+export async function initializeDiscoveryEngine() {
+  const staleRuns = await db
+    .select({ id: discoveryRunsTable.id })
+    .from(discoveryRunsTable)
+    .where(
+      or(
+        eq(discoveryRunsTable.status, "queued"),
+        eq(discoveryRunsTable.status, "running"),
+      ),
+    );
+
+  if (staleRuns.length === 0) return;
+
+  const now = new Date();
+  await db
+    .update(discoveryRunsTable)
+    .set({
+      status: "failed",
+      message: "Discovery interrompido por reinicio da API. Reenvie a coleta.",
+      finishedAt: now,
+    })
+    .where(
+      or(
+        eq(discoveryRunsTable.status, "queued"),
+        eq(discoveryRunsTable.status, "running"),
+      ),
+    );
+
+  liveRuns.clear();
+  queuedRunIds.length = 0;
+  queuedRunIdsSet.clear();
+  activeDiscoveryRuns = 0;
+  logger.warn({ staleRuns: staleRuns.length }, "Marked stale discovery runs as failed on startup");
+}
+
 export async function queueDiscoveryRun(input: DiscoveryRunInput) {
   const targetLabel = buildTargetLabel(input);
   const state: LiveRunState = {
@@ -494,9 +575,8 @@ export async function queueDiscoveryRun(input: DiscoveryRunInput) {
   });
 
   liveRuns.set(state.id, state);
-  void executeRun(state).finally(() => {
-    liveRuns.set(state.id, state);
-  });
+  enqueueRun(state);
+  scheduleQueuedRuns();
 
   return state;
 }
@@ -605,9 +685,16 @@ export async function getCredential(credentialId: string) {
 }
 
 export async function countRunningDiscoveryRuns() {
-  const runs = await listDiscoveryRuns(100);
-  return runs.filter((run) => run.status === "queued" || run.status === "running")
-    .length;
+  const runs = await db
+    .select({ id: discoveryRunsTable.id })
+    .from(discoveryRunsTable)
+    .where(
+      or(
+        eq(discoveryRunsTable.status, "queued"),
+        eq(discoveryRunsTable.status, "running"),
+      ),
+    );
+  return runs.length;
 }
 
 async function deleteNodesAndRelations(nodeIds: string[]) {

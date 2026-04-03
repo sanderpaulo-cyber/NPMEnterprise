@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import { db } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import {
@@ -21,6 +21,42 @@ import {
 } from "../lib/discovery-engine";
 
 const router: IRouter = Router();
+const discoveryMutationHits = new Map<string, number[]>();
+
+function getDiscoveryRateLimitWindowMs() {
+  const raw = Number.parseInt(
+    process.env.DISCOVERY_API_RATE_LIMIT_WINDOW_MS ?? "60000",
+    10,
+  );
+  if (Number.isNaN(raw)) return 60_000;
+  return Math.max(1_000, raw);
+}
+
+function getDiscoveryRateLimitMax() {
+  const raw = Number.parseInt(process.env.DISCOVERY_API_RATE_LIMIT_MAX ?? "10", 10);
+  if (Number.isNaN(raw)) return 10;
+  return Math.max(1, raw);
+}
+
+function applyDiscoveryRateLimit(req: Request, res: Response) {
+  const sourceIp = req.ip || req.socket.remoteAddress || "unknown";
+  const now = Date.now();
+  const windowMs = getDiscoveryRateLimitWindowMs();
+  const maxHits = getDiscoveryRateLimitMax();
+  const previousHits = discoveryMutationHits.get(sourceIp) ?? [];
+  const recentHits = previousHits.filter((timestamp) => now - timestamp < windowMs);
+
+  if (recentHits.length >= maxHits) {
+    res.status(429).json({
+      error: `Muitas operacoes de discovery em pouco tempo. Aguarde alguns segundos e tente novamente.`,
+    });
+    return false;
+  }
+
+  recentHits.push(now);
+  discoveryMutationHits.set(sourceIp, recentHits);
+  return true;
+}
 
 router.get("/scopes", async (req, res): Promise<void> => {
   try {
@@ -253,6 +289,9 @@ router.post("/clear", async (req, res): Promise<void> => {
 
 router.post("/runs", async (req, res): Promise<void> => {
   try {
+    if (!applyDiscoveryRateLimit(req, res)) {
+      return;
+    }
     const {
       scopeIds,
       cidrs,
@@ -312,6 +351,9 @@ router.post("/runs", async (req, res): Promise<void> => {
 
 router.post("/scan", async (req, res): Promise<void> => {
   try {
+    if (!applyDiscoveryRateLimit(req, res)) {
+      return;
+    }
     const {
       subnet,
       scopeId,

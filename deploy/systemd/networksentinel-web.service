@@ -1,0 +1,15 @@
+[Unit]
+Description=NetworkSentinel Web
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/networksentinel
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/env corepack pnpm start:web
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

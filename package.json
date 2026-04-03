@@ -7,6 +7,13 @@
     "dev": "node ./scripts/dev.cjs",
     "dev:api": "corepack pnpm --filter @workspace/api-server run dev",
     "dev:web": "corepack pnpm --filter @workspace/npm-dashboard run dev",
+    "start:api": "corepack pnpm --filter @workspace/api-server run start",
+    "start:web": "corepack pnpm --filter @workspace/npm-dashboard run serve",
+    "db:push": "corepack pnpm --filter @workspace/db run push",
+    "db:backup": "node ./scripts/db-backup.cjs",
+    "db:restore": "node ./scripts/db-restore.cjs",
+    "docker:up": "docker compose up --build",
+    "docker:down": "docker compose down",
     "build": "corepack pnpm run typecheck && corepack pnpm -r --if-present run build",
     "typecheck:libs": "tsc --build",
     "typecheck": "corepack pnpm run typecheck:libs && corepack pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"

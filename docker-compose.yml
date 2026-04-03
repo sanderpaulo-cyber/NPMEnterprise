@@ -1,0 +1,67 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: networksentinel-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: networksentinel
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d networksentinel"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: networksentinel-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/networksentinel
+      API_PORT: 8080
+      LOG_LEVEL: info
+      ENABLE_DEMO_SEED: "false"
+      NETWORK_POLLING_MODE: icmp
+      NETWORK_POLL_INTERVAL_MS: 30000
+      NETWORK_POLL_BATCH_SIZE: 6
+      NETWORK_DETAILED_POLL_INTERVAL_MS: 300000
+      DISCOVERY_MAX_HOSTS_PER_RUN: 512
+      DISCOVERY_HOST_CONCURRENCY: 6
+      DISCOVERY_MAX_PARALLEL_RUNS: 1
+      DISCOVERY_API_RATE_LIMIT_WINDOW_MS: 60000
+      DISCOVERY_API_RATE_LIMIT_MAX: 10
+      PGPOOL_MAX: 20
+      PGPOOL_IDLE_TIMEOUT_MS: 30000
+      PGPOOL_CONNECT_TIMEOUT_MS: 10000
+    ports:
+      - "8080:8080"
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: networksentinel-web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    environment:
+      WEB_PORT: 20112
+      API_PORT: 8080
+      API_PROXY_TARGET: http://api:8080
+      BASE_PATH: /
+    ports:
+      - "20112:20112"
+
+volumes:
+  postgres-data:

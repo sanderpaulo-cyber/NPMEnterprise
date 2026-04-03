@@ -147,6 +147,8 @@ const state: PollerState = {
 
 let pollerInterval: ReturnType<typeof setInterval> | null = null;
 let rateInterval: ReturnType<typeof setInterval> | null = null;
+let pollerLoopHandle: ReturnType<typeof setTimeout> | null = null;
+let cycleInFlight = false;
 
 type WsBroadcastFn = (msg: object) => void;
 let wsBroadcast: WsBroadcastFn = () => {};
@@ -156,7 +158,7 @@ export function setWsBroadcast(fn: WsBroadcastFn) {
 }
 
 export function getPollerStatus() {
-  return { ...state };
+  return { ...state, cycleInFlight };
 }
 
 function randomFloat(min: number, max: number): number {
@@ -1097,15 +1099,34 @@ export function startPoller() {
     state.pollsThisSecond = 0;
   }, 1000);
 
-  pollerInterval = setInterval(async () => {
-    try {
-      await runPollCycle();
-    } catch (err) {
-      logger.error({ err }, "Poll cycle error");
-    }
-  }, pollIntervalMs);
+  const scheduleNextCycle = () => {
+    if (!state.running) return;
+    pollerLoopHandle = setTimeout(async () => {
+      if (cycleInFlight) {
+        logger.warn("Skipping poll cycle because a previous cycle is still running");
+        scheduleNextCycle();
+        return;
+      }
 
-  runPollCycle().catch(err => logger.error({ err }, "Initial poll cycle failed"));
+      cycleInFlight = true;
+      try {
+        await runPollCycle();
+      } catch (err) {
+        logger.error({ err }, "Poll cycle error");
+      } finally {
+        cycleInFlight = false;
+        scheduleNextCycle();
+      }
+    }, pollIntervalMs);
+  };
+
+  cycleInFlight = true;
+  runPollCycle()
+    .catch(err => logger.error({ err }, "Initial poll cycle failed"))
+    .finally(() => {
+      cycleInFlight = false;
+      scheduleNextCycle();
+    });
 
   logger.info(
     {
@@ -1127,6 +1148,11 @@ export function startPoller() {
 export function stopPoller() {
   if (pollerInterval) clearInterval(pollerInterval);
   if (rateInterval) clearInterval(rateInterval);
+  if (pollerLoopHandle) clearTimeout(pollerLoopHandle);
+  pollerInterval = null;
+  pollerLoopHandle = null;
+  rateInterval = null;
   state.running = false;
+  cycleInFlight = false;
   logger.info("Poller stopped");
 }
