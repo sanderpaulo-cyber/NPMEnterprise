@@ -4,11 +4,12 @@
   "license": "MIT",
   "scripts": {
     "preinstall": "node ./scripts/preinstall.cjs",
-    "dev:api": "pnpm --filter @workspace/api-server run dev",
-    "dev:web": "pnpm --filter @workspace/npm-dashboard run dev",
-    "build": "pnpm run typecheck && pnpm -r --if-present run build",
+    "dev": "node ./scripts/dev.cjs",
+    "dev:api": "corepack pnpm --filter @workspace/api-server run dev",
+    "dev:web": "corepack pnpm --filter @workspace/npm-dashboard run dev",
+    "build": "corepack pnpm run typecheck && corepack pnpm -r --if-present run build",
     "typecheck:libs": "tsc --build",
-    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
+    "typecheck": "corepack pnpm run typecheck:libs && corepack pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
   },
   "private": true,
   "devDependencies": {

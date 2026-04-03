@@ -1,5 +1,6 @@
 import { useGetNodeMetrics } from "@workspace/api-client-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { useParams, Link } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/status-badge";
@@ -8,6 +9,26 @@ import { format } from "date-fns";
 import { ArrowLeft, Cpu, HardDrive, Activity, Thermometer, Fan } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useToast } from "@/hooks/use-toast";
+import { listCredentials, type SnmpCredential } from "@/lib/discovery-api";
 
 interface NodeInterface {
   id: string;
@@ -49,10 +70,21 @@ interface NodeVlanEntry {
   updatedAt: string;
 }
 
+interface ManagedNodeSummary {
+  id: string;
+  name: string;
+  ipAddress: string;
+  type: string;
+  status: string;
+  vendor?: string | null;
+  model?: string | null;
+}
+
 interface NodeDetails {
   id: string;
   name: string;
   ipAddress: string;
+  credentialId?: string | null;
   type: string;
   status: string;
   vendor?: string | null;
@@ -74,6 +106,9 @@ interface NodeDetails {
   fanCount?: number | null;
   fanHealthyCount?: number | null;
   interfaceCount?: number | null;
+  pollingProfile?: "critical" | "standard" | "low_impact" | "inventory_scheduled" | null;
+  snmpVersion?: "v1" | "v2c" | "v3" | null;
+  snmpCommunity?: string | null;
   lastPolled?: string | null;
   createdAt: string;
 }
@@ -198,6 +233,67 @@ interface MetricSeriesResponse {
     avg?: number;
   }>;
 }
+
+interface ManagedNodesResponse {
+  nodes: ManagedNodeSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+interface InterfaceAddressEntry {
+  id: string;
+  ifIndex?: number | null;
+  interfaceName?: string | null;
+  ipAddress: string;
+  subnetMask?: string | null;
+  prefixLength?: number | null;
+  addressType?: string | null;
+  updatedAt: string;
+}
+
+interface InterfaceAddressesResponse {
+  nodeId: string;
+  entries: InterfaceAddressEntry[];
+}
+
+interface RouteEntry {
+  id: string;
+  destination: string;
+  subnetMask?: string | null;
+  prefixLength?: number | null;
+  nextHop?: string | null;
+  ifIndex?: number | null;
+  interfaceName?: string | null;
+  metric?: number | null;
+  routeType?: string | null;
+  protocol?: string | null;
+  updatedAt: string;
+}
+
+interface RoutesResponse {
+  nodeId: string;
+  summary: {
+    totalRoutes: number;
+    defaultRoutes: number;
+    connectedRoutes: number;
+    staticRoutes: number;
+  };
+  entries: RouteEntry[];
+}
+
+const pollingProfileOptions = [
+  { value: "critical", label: "Critico", summary: "Saude em 30s, detalhamento a cada 2 min." },
+  { value: "standard", label: "Padrao", summary: "Saude em 60s, detalhamento a cada 5 min." },
+  { value: "low_impact", label: "Baixo impacto", summary: "Saude em 5 min, detalhamento a cada 15 min." },
+  {
+    value: "inventory_scheduled",
+    label: "Inventario agendado",
+    summary: "Saude em 10 min, inventario pesado a cada 60 min.",
+  },
+] as const;
+
+type PollingProfileValue = (typeof pollingProfileOptions)[number]["value"];
 
 interface CorrelatedEndpoint {
   macAddress: string;
@@ -365,6 +461,19 @@ function riskClass(severity: PortRiskFlag["severity"]) {
 
 export default function NodeDetail() {
   const { id } = useParams<{ id: string }>();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [snmpDialogOpen, setSnmpDialogOpen] = useState(false);
+  const [snmpMode, setSnmpMode] = useState<"saved" | "inline">("inline");
+  const [selectedCredentialId, setSelectedCredentialId] = useState("none");
+  const [inlineVersion, setInlineVersion] = useState<"v1" | "v2c">("v2c");
+  const [inlineCommunity, setInlineCommunity] = useState("public");
+  const [savingSnmp, setSavingSnmp] = useState(false);
+  const [testingSnmp, setTestingSnmp] = useState(false);
+  const [snmpTestResult, setSnmpTestResult] = useState<SnmpDiagnosticsResponse | null>(null);
+  const [pollingDialogOpen, setPollingDialogOpen] = useState(false);
+  const [pollingProfile, setPollingProfile] = useState<PollingProfileValue>("standard");
+  const [savingPollingProfile, setSavingPollingProfile] = useState(false);
   const { data: node, isLoading: loadingNode } = useQuery({
     queryKey: ["/api/nodes", id],
     enabled: Boolean(id),
@@ -423,6 +532,46 @@ export default function NodeDetail() {
       const response = await fetch(`/api/nodes/${id}/snmp-diagnostics`);
       if (!response.ok) {
         throw new Error(`Falha ao carregar diagnostico SNMP (${response.status})`);
+      }
+      return response.json();
+    },
+  });
+  const { data: credentialsData } = useQuery({
+    queryKey: ["/api/discovery/credentials"],
+    queryFn: (): Promise<{ credentials: SnmpCredential[] }> => listCredentials(),
+    staleTime: 30000,
+  });
+  const { data: managedNodesData } = useQuery({
+    queryKey: ["/api/nodes", "l3-neighbors"],
+    queryFn: async (): Promise<ManagedNodesResponse> => {
+      const response = await fetch("/api/nodes?limit=500");
+      if (!response.ok) {
+        throw new Error(`Falha ao carregar inventario de nos (${response.status})`);
+      }
+      return response.json();
+    },
+    staleTime: 30000,
+  });
+  const { data: interfaceAddressesData, isLoading: loadingInterfaceAddresses } = useQuery({
+    queryKey: ["/api/nodes/interface-addresses", id],
+    enabled: Boolean(id),
+    refetchInterval: 15000,
+    queryFn: async (): Promise<InterfaceAddressesResponse> => {
+      const response = await fetch(`/api/nodes/${id}/interface-addresses`);
+      if (!response.ok) {
+        throw new Error(`Falha ao carregar enderecos IP (${response.status})`);
+      }
+      return response.json();
+    },
+  });
+  const { data: routeData, isLoading: loadingRoutes } = useQuery({
+    queryKey: ["/api/nodes/routes", id],
+    enabled: Boolean(id),
+    refetchInterval: 15000,
+    queryFn: async (): Promise<RoutesResponse> => {
+      const response = await fetch(`/api/nodes/${id}/routes`);
+      if (!response.ok) {
+        throw new Error(`Falha ao carregar rotas (${response.status})`);
       }
       return response.json();
     },
@@ -520,6 +669,208 @@ export default function NodeDetail() {
     return <div className="p-8 text-center text-destructive">Node not found</div>;
   }
 
+  const currentNode = node;
+  const currentPollingProfile = (currentNode.pollingProfile ?? "standard") as PollingProfileValue;
+  const currentPollingProfileMeta =
+    pollingProfileOptions.find((option) => option.value === currentPollingProfile) ??
+    pollingProfileOptions[1];
+
+  function openPollingDialog() {
+    setPollingProfile(currentPollingProfile);
+    setPollingDialogOpen(true);
+  }
+
+  function openSnmpDialog() {
+    setSnmpMode(currentNode.credentialId ? "saved" : "inline");
+    setSelectedCredentialId(currentNode.credentialId ?? "none");
+    setInlineVersion(currentNode.snmpVersion === "v1" ? "v1" : "v2c");
+    setInlineCommunity(currentNode.snmpCommunity ?? "public");
+    setSnmpTestResult(null);
+    setSnmpDialogOpen(true);
+  }
+
+  async function handleSavePollingProfile() {
+    try {
+      setSavingPollingProfile(true);
+      const response = await fetch(`/api/nodes/${id}/polling-profile`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ pollingProfile }),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `HTTP ${response.status}`);
+      }
+
+      await queryClient.invalidateQueries();
+      setPollingDialogOpen(false);
+      toast({
+        title: "Perfil de coleta atualizado",
+        description: "A nova estrategia de polling ja foi aplicada ao dispositivo.",
+      });
+    } catch (error) {
+      toast({
+        title: "Falha ao atualizar perfil",
+        description:
+          error instanceof Error ? error.message : "Nao foi possivel atualizar o perfil de coleta.",
+        variant: "destructive",
+      });
+    } finally {
+      setSavingPollingProfile(false);
+    }
+  }
+
+  async function handleTestSnmp() {
+    try {
+      setTestingSnmp(true);
+      setSnmpTestResult(null);
+
+      const payload =
+        snmpMode === "saved"
+          ? { credentialId: selectedCredentialId }
+          : {
+              credentialId: null,
+              snmpVersion: inlineVersion,
+              snmpCommunity: inlineCommunity.trim(),
+            };
+
+      const response = await fetch(`/api/nodes/${id}/snmp/test`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `HTTP ${response.status}`);
+      }
+
+      const result = (await response.json()) as SnmpDiagnosticsResponse;
+      setSnmpTestResult(result);
+      toast({
+        title: result.diagnostics ? "Teste SNMP concluido" : "Teste SNMP sem resposta valida",
+        description: result.diagnostics
+          ? "A credencial respondeu ao diagnostico SNMP."
+          : (result.message ?? "A credencial nao retornou diagnostico SNMP valido."),
+      });
+    } catch (error) {
+      toast({
+        title: "Falha ao testar SNMP",
+        description:
+          error instanceof Error ? error.message : "Nao foi possivel testar a credencial SNMP.",
+        variant: "destructive",
+      });
+    } finally {
+      setTestingSnmp(false);
+    }
+  }
+
+  async function handleSaveSnmp() {
+    try {
+      setSavingSnmp(true);
+
+      const payload =
+        snmpMode === "saved"
+          ? { credentialId: selectedCredentialId }
+          : {
+              credentialId: null,
+              snmpVersion: inlineVersion,
+              snmpCommunity: inlineCommunity.trim(),
+            };
+
+      const response = await fetch(`/api/nodes/${id}/snmp`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `HTTP ${response.status}`);
+      }
+
+      await queryClient.invalidateQueries();
+      setSnmpDialogOpen(false);
+      toast({
+        title: "Credencial SNMP atualizada",
+        description: "A configuracao foi salva e uma nova coleta foi disparada.",
+      });
+    } catch (error) {
+      toast({
+        title: "Falha ao atualizar SNMP",
+        description:
+          error instanceof Error ? error.message : "Nao foi possivel salvar a credencial SNMP.",
+        variant: "destructive",
+      });
+    } finally {
+      setSavingSnmp(false);
+    }
+  }
+
+  const hasArpData = (arpData?.entries?.length ?? 0) > 0;
+  const hasMacData = (macData?.entries?.length ?? 0) > 0;
+  const hasVlanData = (vlanData?.entries?.length ?? 0) > 0;
+  const currentSnmpModeLabel = currentNode.credentialId ? "Credencial salva" : "Comunidade inline";
+  const currentSnmpCredentialLabel = snmpDiagnostics?.credential
+    ? `${snmpDiagnostics.credential.name} (${snmpDiagnostics.credential.version})`
+    : currentNode.credentialId
+      ? "Credencial associada"
+      : `Inline ${currentNode.snmpVersion ?? "v2c"}`;
+  const interfaceNameByIfIndex = new Map(
+    (interfaceData?.interfaces ?? []).map((iface) => [iface.ifIndex, iface] as const),
+  );
+  const managedNodeByIp = new Map(
+    (managedNodesData?.nodes ?? []).map((managedNode) => [managedNode.ipAddress, managedNode] as const),
+  );
+  const l3Adjacencies = (arpData?.entries ?? []).map((entry) => {
+    const localInterface = entry.ifIndex != null ? interfaceNameByIfIndex.get(entry.ifIndex) : undefined;
+    const managedNeighbor = managedNodeByIp.get(entry.ipAddress);
+    return {
+      ...entry,
+      interfaceName: localInterface?.name ?? null,
+      interfaceAlias: localInterface?.alias ?? localInterface?.description ?? null,
+      interfaceStatus: localInterface?.operStatus ?? null,
+      managedNeighbor,
+    };
+  });
+  const uniqueNeighborIps = new Set(l3Adjacencies.map((entry) => entry.ipAddress));
+  const l3ManagedNeighbors = l3Adjacencies.filter((entry) => entry.managedNeighbor);
+  const l3Interfaces = Array.from(
+    new Map(
+      l3Adjacencies
+        .filter((entry) => entry.ifIndex != null)
+        .map((entry) => {
+          const key = entry.ifIndex as number;
+          const neighborCount = l3Adjacencies.filter((candidate) => candidate.ifIndex === key).length;
+          const managedCount = l3Adjacencies.filter(
+            (candidate) => candidate.ifIndex === key && candidate.managedNeighbor,
+          ).length;
+          return [
+            key,
+            {
+              ifIndex: key,
+              interfaceName: entry.interfaceName ?? `ifIndex ${key}`,
+              interfaceAlias: entry.interfaceAlias,
+              interfaceStatus: entry.interfaceStatus,
+              neighborCount,
+              managedCount,
+            },
+          ] as const;
+        }),
+    ).values(),
+  ).sort((left, right) => left.ifIndex - right.ifIndex);
+  const l2EmptyStateMessage =
+    hasArpData && !hasMacData && !hasVlanData
+      ? "Este equipamento respondeu ARP, mas nao expos MAC table nem inventario de VLAN por SNMP. Em firewalls e roteadores L3 isso e comum; consulte a ARP Table abaixo."
+      : "Sem correlacao disponivel ainda. Requer MAC table e, idealmente, ARP/topologia.";
+
   return (
     <div className="space-y-6 pb-20">
       <Link href="/nodes" className="text-muted-foreground hover:text-foreground flex items-center text-sm font-medium w-fit transition-colors">
@@ -552,6 +903,28 @@ export default function NodeDetail() {
           </div>
         </div>
         <div className="flex gap-6 text-sm">
+          <div className="flex flex-col items-end gap-2">
+            <span className="text-muted-foreground">
+              Perfil de coleta: {currentPollingProfileMeta.label}
+            </span>
+            <span className="max-w-[18rem] text-right text-xs text-muted-foreground">
+              {currentPollingProfileMeta.summary}
+            </span>
+            <Button type="button" variant="outline" size="sm" onClick={openPollingDialog}>
+              Ajustar coleta
+            </Button>
+          </div>
+          <div className="flex flex-col items-end gap-2">
+            <span className="text-muted-foreground">
+              SNMP ativo: {currentSnmpModeLabel}
+            </span>
+            <span className="max-w-[18rem] text-right text-xs text-muted-foreground">
+              {currentSnmpCredentialLabel}
+            </span>
+            <Button type="button" variant="outline" size="sm" onClick={openSnmpDialog}>
+              Ajustar SNMP
+            </Button>
+          </div>
           <div className="flex flex-col items-end">
             <span className="text-muted-foreground">Uptime</span>
             <span className="font-mono font-medium text-foreground">{node.uptime ? `${Math.floor(node.uptime/86400)}d ${Math.floor((node.uptime%86400)/3600)}h` : 'N/A'}</span>
@@ -563,11 +936,225 @@ export default function NodeDetail() {
         </div>
       </div>
 
+      <Dialog open={pollingDialogOpen} onOpenChange={setPollingDialogOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Ajustar perfil de coleta</DialogTitle>
+            <DialogDescription>
+              Defina a criticidade deste no para equilibrar velocidade de deteccao e impacto na rede.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="rounded-lg border border-border/50 bg-secondary/20 p-3 text-sm">
+              <div className="font-medium">Perfil atual</div>
+              <div className="mt-1 text-muted-foreground">
+                {currentPollingProfileMeta.label} | {currentPollingProfileMeta.summary}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Perfil de coleta</Label>
+              <Select
+                value={pollingProfile}
+                onValueChange={(value: PollingProfileValue) => setPollingProfile(value)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {pollingProfileOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="rounded-lg border border-border/50 bg-background/40 p-3 text-sm text-muted-foreground">
+              {pollingProfileOptions.find((option) => option.value === pollingProfile)?.summary}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setPollingDialogOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              onClick={handleSavePollingProfile}
+              disabled={savingPollingProfile || pollingProfile === currentPollingProfile}
+            >
+              {savingPollingProfile ? "Salvando..." : "Salvar perfil"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={snmpDialogOpen} onOpenChange={setSnmpDialogOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Ajustar credencial SNMP</DialogTitle>
+            <DialogDescription>
+              Escolha uma credencial cadastrada ou informe a comunidade correta para este dispositivo.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="rounded-lg border border-border/50 bg-secondary/20 p-3 text-sm">
+              <div className="font-medium">Configuracao atual</div>
+              <div className="mt-1 text-muted-foreground">
+                {currentSnmpModeLabel} | {currentSnmpCredentialLabel}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Modo</Label>
+              <Select
+                value={snmpMode}
+                onValueChange={(value: "saved" | "inline") => {
+                  setSnmpMode(value);
+                  setSnmpTestResult(null);
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="saved">Credencial salva</SelectItem>
+                  <SelectItem value="inline">Comunidade inline</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {snmpMode === "saved" ? (
+              <div className="space-y-2">
+                <Label>Credencial SNMP</Label>
+                <Select
+                  value={selectedCredentialId}
+                  onValueChange={(value) => {
+                    setSelectedCredentialId(value);
+                    setSnmpTestResult(null);
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione uma credencial" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Selecione uma credencial</SelectItem>
+                    {(credentialsData?.credentials ?? []).map((credential) => (
+                      <SelectItem key={credential.id} value={credential.id}>
+                        {credential.name} ({credential.version})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : (
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Versao SNMP</Label>
+                  <Select
+                    value={inlineVersion}
+                    onValueChange={(value: "v1" | "v2c") => {
+                      setInlineVersion(value);
+                      setSnmpTestResult(null);
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="v1">v1</SelectItem>
+                      <SelectItem value="v2c">v2c</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Comunidade</Label>
+                  <Input
+                    value={inlineCommunity}
+                    onChange={(event) => {
+                      setInlineCommunity(event.target.value);
+                      setSnmpTestResult(null);
+                    }}
+                    placeholder="public"
+                  />
+                </div>
+              </div>
+            )}
+
+            {snmpTestResult ? (
+              <div
+                className={`rounded-lg border p-3 text-sm ${
+                  snmpTestResult.diagnostics
+                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                    : "border-warning/30 bg-warning/10 text-warning"
+                }`}
+              >
+                <div className="font-medium">
+                  {snmpTestResult.diagnostics ? "Teste SNMP bem-sucedido" : "Teste SNMP sem diagnostico valido"}
+                </div>
+                <div className="mt-1">
+                  {snmpTestResult.diagnostics
+                    ? `${snmpTestResult.diagnostics.identity?.sysName ?? snmpTestResult.target} | CPU ${
+                        snmpTestResult.diagnostics.cpu.selectedValue != null
+                          ? `${snmpTestResult.diagnostics.cpu.selectedValue.toFixed(2)}%`
+                          : "N/A"
+                      } | Mem ${
+                        snmpTestResult.diagnostics.memory.selectedValue != null
+                          ? `${snmpTestResult.diagnostics.memory.selectedValue.toFixed(2)}%`
+                          : "N/A"
+                      }`
+                    : (snmpTestResult.message ?? "Sem resposta SNMP valida com a credencial informada.")}
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setSnmpDialogOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={handleTestSnmp}
+              disabled={
+                testingSnmp ||
+                savingSnmp ||
+                (snmpMode === "saved" && selectedCredentialId === "none") ||
+                (snmpMode === "inline" && inlineCommunity.trim().length === 0)
+              }
+            >
+              {testingSnmp ? "Testando..." : "Testar credencial"}
+            </Button>
+            <Button
+              type="button"
+              onClick={handleSaveSnmp}
+              disabled={
+                savingSnmp ||
+                (snmpMode === "saved" && selectedCredentialId === "none") ||
+                (snmpMode === "inline" && inlineCommunity.trim().length === 0)
+              }
+            >
+              {savingSnmp ? "Salvando..." : "Salvar e coletar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Tabs defaultValue="performance" className="w-full">
         <TabsList className="bg-secondary/50 border border-border/50 mb-6">
           <TabsTrigger value="performance" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">Performance</TabsTrigger>
           <TabsTrigger value="interfaces" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">Interfaces</TabsTrigger>
           <TabsTrigger value="l2" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">Layer 2</TabsTrigger>
+          <TabsTrigger value="l3" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">Layer 3</TabsTrigger>
           <TabsTrigger value="details" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">System Details</TabsTrigger>
         </TabsList>
 
@@ -917,7 +1504,7 @@ export default function NodeDetail() {
                     {(accessData?.ports ?? []).length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
-                          Sem correlação disponível ainda. Requer MAC table e, idealmente, ARP/topologia.
+                          {l2EmptyStateMessage}
                         </TableCell>
                       </TableRow>
                     ) : null}
@@ -1143,7 +1730,276 @@ export default function NodeDetail() {
             </CardContent>
           </Card>
         </TabsContent>
-        
+
+        <TabsContent value="l3" className="space-y-6">
+          <Card className="glass-panel border-border/50">
+            <CardHeader>
+              <CardTitle>Layer 3 Overview</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="rounded-lg border border-border/50 bg-secondary/20 p-4 text-sm text-muted-foreground">
+                Esta visao usa adjacencias IP observadas por ARP e correlacao com nos ja inventariados.
+                Tabela de rotas SNMP dedicada ainda nao esta disponivel neste modulo.
+              </div>
+              <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+                <div className="rounded-lg border border-border/50 p-4">
+                  <div className="text-xs uppercase tracking-wider text-muted-foreground">Adjacencias IP</div>
+                  <div className="mt-1 text-2xl font-mono">{uniqueNeighborIps.size}</div>
+                </div>
+                <div className="rounded-lg border border-border/50 p-4">
+                  <div className="text-xs uppercase tracking-wider text-muted-foreground">Vizinhos gerenciados</div>
+                  <div className="mt-1 text-2xl font-mono">{l3ManagedNeighbors.length}</div>
+                </div>
+                <div className="rounded-lg border border-border/50 p-4">
+                  <div className="text-xs uppercase tracking-wider text-muted-foreground">Interfaces com L3</div>
+                  <div className="mt-1 text-2xl font-mono">{interfaceAddressesData?.entries.length ?? l3Interfaces.length}</div>
+                </div>
+                <div className="rounded-lg border border-border/50 p-4">
+                  <div className="text-xs uppercase tracking-wider text-muted-foreground">Rotas</div>
+                  <div className="mt-1 text-2xl font-mono">{routeData?.summary.totalRoutes ?? 0}</div>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+                <div className="rounded-lg border border-border/50 p-4">
+                  <div className="text-xs uppercase tracking-wider text-muted-foreground">Default routes</div>
+                  <div className="mt-1 text-2xl font-mono">{routeData?.summary.defaultRoutes ?? 0}</div>
+                </div>
+                <div className="rounded-lg border border-border/50 p-4">
+                  <div className="text-xs uppercase tracking-wider text-muted-foreground">Rotas conectadas</div>
+                  <div className="mt-1 text-2xl font-mono">{routeData?.summary.connectedRoutes ?? 0}</div>
+                </div>
+                <div className="rounded-lg border border-border/50 p-4">
+                  <div className="text-xs uppercase tracking-wider text-muted-foreground">Rotas estaticas</div>
+                  <div className="mt-1 text-2xl font-mono">{routeData?.summary.staticRoutes ?? 0}</div>
+                </div>
+                <div className="rounded-lg border border-border/50 p-4">
+                  <div className="text-xs uppercase tracking-wider text-muted-foreground">NetPath</div>
+                  <div className="mt-2">
+                    <Link href="/netpath">
+                      <Button type="button" variant="outline" size="sm">Abrir analise</Button>
+                    </Link>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="glass-panel border-border/50">
+            <CardHeader>
+              <CardTitle>Interface IP Addresses</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {loadingInterfaceAddresses ? (
+                <div className="p-6 text-muted-foreground">Carregando enderecos IP...</div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>IfIndex</TableHead>
+                      <TableHead>Interface</TableHead>
+                      <TableHead>Endereco IP</TableHead>
+                      <TableHead>Prefixo</TableHead>
+                      <TableHead>Mask</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(interfaceAddressesData?.entries ?? []).map((entry) => (
+                      <TableRow key={entry.id}>
+                        <TableCell className="font-mono">{entry.ifIndex ?? "—"}</TableCell>
+                        <TableCell>{entry.interfaceName || "—"}</TableCell>
+                        <TableCell className="font-mono">{entry.ipAddress}</TableCell>
+                        <TableCell className="font-mono">
+                          {entry.prefixLength != null ? `/${entry.prefixLength}` : "—"}
+                        </TableCell>
+                        <TableCell className="font-mono">{entry.subnetMask || "—"}</TableCell>
+                      </TableRow>
+                    ))}
+                    {(interfaceAddressesData?.entries ?? []).length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                          Nenhum endereco IP por interface foi coletado via SNMP neste no.
+                        </TableCell>
+                      </TableRow>
+                    ) : null}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="glass-panel border-border/50">
+            <CardHeader>
+              <CardTitle>Routing Table</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              {loadingRoutes ? (
+                <div className="p-6 text-muted-foreground">Carregando rotas...</div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Destino</TableHead>
+                      <TableHead>Prefixo</TableHead>
+                      <TableHead>Next hop</TableHead>
+                      <TableHead>Interface</TableHead>
+                      <TableHead>Tipo</TableHead>
+                      <TableHead>Protocolo</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(routeData?.entries ?? []).map((entry) => (
+                      <TableRow key={entry.id}>
+                        <TableCell className="font-mono">{entry.destination}</TableCell>
+                        <TableCell className="font-mono">
+                          {entry.prefixLength != null ? `/${entry.prefixLength}` : (entry.subnetMask || "—")}
+                        </TableCell>
+                        <TableCell className="font-mono">{entry.nextHop || "—"}</TableCell>
+                        <TableCell>{entry.interfaceName || (entry.ifIndex != null ? `ifIndex ${entry.ifIndex}` : "—")}</TableCell>
+                        <TableCell className="capitalize">{entry.routeType || "—"}</TableCell>
+                        <TableCell className="capitalize">{entry.protocol || "—"}</TableCell>
+                      </TableRow>
+                    ))}
+                    {(routeData?.entries ?? []).length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                          Nenhuma rota Layer 3 foi coletada via SNMP neste no.
+                        </TableCell>
+                      </TableRow>
+                    ) : null}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="glass-panel border-border/50">
+            <CardHeader>
+              <CardTitle>Managed L3 Neighbors</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Interface local</TableHead>
+                    <TableHead>No remoto</TableHead>
+                    <TableHead>IP</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Perfil</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {l3ManagedNeighbors.map((entry) => (
+                    <TableRow key={`${entry.id}:managed`}>
+                      <TableCell>
+                        <div className="font-medium">{entry.interfaceName || (entry.ifIndex != null ? `ifIndex ${entry.ifIndex}` : "—")}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {entry.interfaceAlias || "—"}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="font-medium">{entry.managedNeighbor?.name || "—"}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {entry.managedNeighbor?.vendor || "—"} {entry.managedNeighbor?.model || ""}
+                        </div>
+                      </TableCell>
+                      <TableCell className="font-mono">{entry.ipAddress}</TableCell>
+                      <TableCell className="capitalize">{entry.managedNeighbor?.status || "—"}</TableCell>
+                      <TableCell className="capitalize">{entry.managedNeighbor?.type || "—"}</TableCell>
+                    </TableRow>
+                  ))}
+                  {l3ManagedNeighbors.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                        Nenhum vizinho Layer 3 gerenciado foi correlacionado ainda a partir da ARP Table.
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+
+          <Card className="glass-panel border-border/50">
+            <CardHeader>
+              <CardTitle>Interfaces With IP Adjacency</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>IfIndex</TableHead>
+                    <TableHead>Interface</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Adjacencias</TableHead>
+                    <TableHead>Nos gerenciados</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {l3Interfaces.map((entry) => (
+                    <TableRow key={`l3-if-${entry.ifIndex}`}>
+                      <TableCell className="font-mono">{entry.ifIndex}</TableCell>
+                      <TableCell>
+                        <div className="font-medium">{entry.interfaceName}</div>
+                        <div className="text-xs text-muted-foreground">{entry.interfaceAlias || "—"}</div>
+                      </TableCell>
+                      <TableCell className="capitalize">{entry.interfaceStatus || "—"}</TableCell>
+                      <TableCell className="font-mono">{entry.neighborCount}</TableCell>
+                      <TableCell className="font-mono">{entry.managedCount}</TableCell>
+                    </TableRow>
+                  ))}
+                  {l3Interfaces.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                        Nenhuma interface com adjacencia IP foi identificada ainda.
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+
+          <Card className="glass-panel border-border/50">
+            <CardHeader>
+              <CardTitle>L3 IP Adjacency Table</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Interface local</TableHead>
+                    <TableHead>IP remoto</TableHead>
+                    <TableHead>MAC</TableHead>
+                    <TableHead>Inventariado</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {l3Adjacencies.map((entry) => (
+                    <TableRow key={`l3-adj-${entry.id}`}>
+                      <TableCell>
+                        <div className="font-medium">{entry.interfaceName || (entry.ifIndex != null ? `ifIndex ${entry.ifIndex}` : "—")}</div>
+                        <div className="text-xs text-muted-foreground">{entry.interfaceAlias || "—"}</div>
+                      </TableCell>
+                      <TableCell className="font-mono">{entry.ipAddress}</TableCell>
+                      <TableCell className="font-mono">{entry.macAddress}</TableCell>
+                      <TableCell>
+                        {entry.managedNeighbor ? `${entry.managedNeighbor.name} (${entry.managedNeighbor.type})` : "Nao"}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {l3Adjacencies.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
+                        Nenhuma adjacencia Layer 3 foi observada ainda para este no.
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         <TabsContent value="details">
           <Card className="glass-panel border-border/50">
             <CardHeader>

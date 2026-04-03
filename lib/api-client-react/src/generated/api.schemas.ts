@@ -35,6 +35,16 @@ export const NodeStatus = {
   unknown: "unknown",
 } as const;
 
+export type NodePollingProfile =
+  (typeof NodePollingProfile)[keyof typeof NodePollingProfile];
+
+export const NodePollingProfile = {
+  critical: "critical",
+  standard: "standard",
+  low_impact: "low_impact",
+  inventory_scheduled: "inventory_scheduled",
+} as const;
+
 export interface Node {
   id: string;
   name: string;
@@ -49,6 +59,7 @@ export interface Node {
   cpuUsage?: number;
   memUsage?: number;
   interfaceCount?: number;
+  pollingProfile?: NodePollingProfile;
   lastPolled?: string;
   createdAt?: string;
 }
@@ -73,6 +84,16 @@ export const CreateNodeRequestSnmpVersion = {
   v3: "v3",
 } as const;
 
+export type CreateNodeRequestPollingProfile =
+  (typeof CreateNodeRequestPollingProfile)[keyof typeof CreateNodeRequestPollingProfile];
+
+export const CreateNodeRequestPollingProfile = {
+  critical: "critical",
+  standard: "standard",
+  low_impact: "low_impact",
+  inventory_scheduled: "inventory_scheduled",
+} as const;
+
 export interface CreateNodeRequest {
   name: string;
   ipAddress: string;
@@ -81,6 +102,7 @@ export interface CreateNodeRequest {
   snmpCommunity?: string;
   location?: string;
   vendor?: string;
+  pollingProfile?: CreateNodeRequestPollingProfile;
 }
 
 export interface NodeListResponse {

@@ -120,8 +120,11 @@ BASE_PATH=/
 
 ENABLE_DEMO_SEED=false
 NETWORK_POLLING_MODE=icmp
-DISCOVERY_MAX_HOSTS_PER_RUN=4096
-DISCOVERY_HOST_CONCURRENCY=24
+NETWORK_POLL_INTERVAL_MS=30000
+NETWORK_POLL_BATCH_SIZE=6
+NETWORK_DETAILED_POLL_INTERVAL_MS=300000
+DISCOVERY_MAX_HOSTS_PER_RUN=512
+DISCOVERY_HOST_CONCURRENCY=6
 LOG_LEVEL=info
 ```
 
@@ -134,9 +137,26 @@ LOG_LEVEL=info
 - `BASE_PATH`: base path da aplicacao web
 - `ENABLE_DEMO_SEED`: popula dados demo se `true`
 - `NETWORK_POLLING_MODE`: `simulated` para demo ou qualquer outro valor para coleta real
+- `NETWORK_POLL_INTERVAL_MS`: cadencia base do scheduler de coleta
+- `NETWORK_POLL_BATCH_SIZE`: quantidade de nos consultados em paralelo por lote
+- `NETWORK_DETAILED_POLL_INTERVAL_MS`: intervalo detalhado usado como base para o perfil padrao
 - `DISCOVERY_MAX_HOSTS_PER_RUN`: limite de IPs por execucao de descoberta
 - `DISCOVERY_HOST_CONCURRENCY`: concorrencia da descoberta
 - `LOG_LEVEL`: nivel de log da API
+
+Baseline recomendado para redes maiores:
+
+- manter `NETWORK_POLL_INTERVAL_MS=30000`
+- manter `NETWORK_POLL_BATCH_SIZE` entre `4` e `8`
+- manter `NETWORK_DETAILED_POLL_INTERVAL_MS=300000` ou maior
+- executar discovery por blocos menores e com `DISCOVERY_HOST_CONCURRENCY` entre `4` e `8`
+
+Perfis de coleta por no:
+
+- `critical`: saude em `30s`, detalhamento em `2 min`
+- `standard`: saude em `60s`, detalhamento em `5 min`
+- `low_impact`: saude em `5 min`, detalhamento em `15 min`
+- `inventory_scheduled`: saude em `10 min`, inventario pesado em `60 min`
 
 ## Banco de dados
 

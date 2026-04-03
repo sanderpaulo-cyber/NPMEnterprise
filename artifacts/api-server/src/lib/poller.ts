@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   alertsTable,
@@ -7,8 +7,10 @@ import {
   nodeArpEntriesTable,
   nodeEnvironmentSensorsTable,
   nodeHardwareComponentsTable,
+  nodeInterfaceAddressesTable,
   nodeInterfacesTable,
   nodeMacEntriesTable,
+  nodeRoutesTable,
   nodeVlansTable,
   nodesTable,
   snmpCredentialsTable,
@@ -22,6 +24,103 @@ import { syncTopologyFromCdp, syncTopologyFromLldp } from "./topology-engine";
 
 function useSimulatedPolling(): boolean {
   return process.env.NETWORK_POLLING_MODE === "simulated";
+}
+
+const DEFAULT_REAL_POLL_INTERVAL_MS = 30_000;
+const DEFAULT_REAL_BATCH_SIZE = 6;
+const DEFAULT_DETAILED_POLL_INTERVAL_MS = 5 * 60_000;
+const detailedPollState = new Map<string, number>();
+const POLLING_PROFILES = {
+  critical: true,
+  standard: true,
+  low_impact: true,
+  inventory_scheduled: true,
+} as const;
+
+type PollingProfile = keyof typeof POLLING_PROFILES;
+
+function readEnvInt(name: string, fallback: number, min: number): number {
+  const raw = process.env[name];
+  const parsed = Number.parseInt(raw ?? "", 10);
+  if (Number.isNaN(parsed)) return fallback;
+  return Math.max(min, parsed);
+}
+
+function getPollerIntervalMs() {
+  return useSimulatedPolling()
+    ? 30_000
+    : readEnvInt("NETWORK_POLL_INTERVAL_MS", DEFAULT_REAL_POLL_INTERVAL_MS, 5_000);
+}
+
+function getPollerBatchSize() {
+  return useSimulatedPolling()
+    ? 100
+    : readEnvInt("NETWORK_POLL_BATCH_SIZE", DEFAULT_REAL_BATCH_SIZE, 1);
+}
+
+function getDetailedPollIntervalMs() {
+  return useSimulatedPolling()
+    ? 30_000
+    : readEnvInt(
+        "NETWORK_DETAILED_POLL_INTERVAL_MS",
+        DEFAULT_DETAILED_POLL_INTERVAL_MS,
+        30_000,
+      );
+}
+
+function normalizePollingProfile(profile: string | null | undefined): PollingProfile {
+  if (!profile) return "standard";
+  return profile in POLLING_PROFILES ? (profile as PollingProfile) : "standard";
+}
+
+function getProfileSchedule(profile: string | null | undefined) {
+  const tickMs = getPollerIntervalMs();
+  const detailedBaseMs = getDetailedPollIntervalMs();
+  switch (normalizePollingProfile(profile)) {
+    case "critical":
+      return {
+        fastIntervalMs: tickMs,
+        detailedIntervalMs: Math.min(detailedBaseMs, 2 * 60_000),
+      };
+    case "low_impact":
+      return {
+        fastIntervalMs: Math.max(tickMs * 10, 5 * 60_000),
+        detailedIntervalMs: Math.max(detailedBaseMs * 3, 15 * 60_000),
+      };
+    case "inventory_scheduled":
+      return {
+        fastIntervalMs: Math.max(tickMs * 20, 10 * 60_000),
+        detailedIntervalMs: Math.max(detailedBaseMs * 12, 60 * 60_000),
+      };
+    case "standard":
+    default:
+      return {
+        fastIntervalMs: Math.max(tickMs * 2, 60_000),
+        detailedIntervalMs: detailedBaseMs,
+      };
+  }
+}
+
+function shouldPollNodeNow(input: {
+  lastPolled: Date | null;
+  pollingProfile: string | null | undefined;
+  force: boolean;
+}) {
+  if (input.force) return true;
+  if (!input.lastPolled) return true;
+  const schedule = getProfileSchedule(input.pollingProfile);
+  return Date.now() - input.lastPolled.getTime() >= schedule.fastIntervalMs;
+}
+
+function shouldRunDetailedPoll(
+  nodeId: string,
+  pollingProfile: string | null | undefined,
+  forceDetailed: boolean,
+) {
+  if (forceDetailed || useSimulatedPolling()) return true;
+  const lastDetailedAt = detailedPollState.get(nodeId) ?? 0;
+  const intervalMs = getProfileSchedule(pollingProfile).detailedIntervalMs;
+  return Date.now() - lastDetailedAt >= intervalMs;
 }
 
 interface PollerState {
@@ -114,8 +213,8 @@ async function resolveNodeCredential(node: {
       privProtocol: "none",
       privPassword: null,
       port: 161,
-      timeoutMs: 2000,
-      retries: 1,
+      timeoutMs: 5000,
+      retries: 2,
       enabled: true,
       createdAt: new Date(),
     };
@@ -609,20 +708,69 @@ async function syncL2Inventory(
   }
 }
 
+async function syncL3Inventory(
+  nodeId: string,
+  snapshot: Awaited<ReturnType<typeof fetchSnmpPollSnapshot>> | null,
+  now: Date,
+) {
+  if (!snapshot) return;
+
+  await db.delete(nodeInterfaceAddressesTable).where(eq(nodeInterfaceAddressesTable.nodeId, nodeId));
+  await db.delete(nodeRoutesTable).where(eq(nodeRoutesTable.nodeId, nodeId));
+
+  if (snapshot.interfaceAddresses && snapshot.interfaceAddresses.length > 0) {
+    await db.insert(nodeInterfaceAddressesTable).values(
+      snapshot.interfaceAddresses.map((entry, index) => ({
+        id: `${nodeId}:ip:${entry.ipAddress}:${entry.ifIndex ?? "na"}:${index}`,
+        nodeId,
+        ifIndex: entry.ifIndex ?? null,
+        interfaceName: entry.interfaceName ?? null,
+        ipAddress: entry.ipAddress,
+        subnetMask: entry.subnetMask ?? null,
+        prefixLength: entry.prefixLength ?? null,
+        addressType: entry.addressType ?? null,
+        updatedAt: now,
+      })),
+    );
+  }
+
+  if (snapshot.routes && snapshot.routes.length > 0) {
+    await db.insert(nodeRoutesTable).values(
+      snapshot.routes.map((route, index) => ({
+        id: `${nodeId}:route:${route.destination}:${route.prefixLength ?? "na"}:${route.nextHop ?? "na"}:${index}`,
+        nodeId,
+        destination: route.destination,
+        subnetMask: route.subnetMask ?? null,
+        prefixLength: route.prefixLength ?? null,
+        nextHop: route.nextHop ?? null,
+        ifIndex: route.ifIndex ?? null,
+        interfaceName: route.interfaceName ?? null,
+        metric: route.metric ?? null,
+        routeType: route.routeType ?? null,
+        protocol: route.protocol ?? null,
+        updatedAt: now,
+      })),
+    );
+  }
+}
+
 async function pollNodeReal(node: {
   id: string;
   ipAddress: string;
   name: string;
   credentialId: string | null;
+  pollingProfile: PollingProfile | null;
   snmpVersion: "v1" | "v2c" | "v3" | null;
   snmpCommunity: string | null;
-}): Promise<boolean> {
+}, forceDetailed = false): Promise<boolean> {
   try {
     state.activeWorkers++;
 
     const ping = await icmpPingOnce(node.ipAddress, 5000);
     const credential = await resolveNodeCredential(node);
-    const snmp = credential
+    const detailedPollDue = shouldRunDetailedPoll(node.id, node.pollingProfile, forceDetailed);
+    const shouldRunSnmp = credential != null && (detailedPollDue || !ping.ok);
+    const snmp = shouldRunSnmp
       ? await fetchSnmpPollSnapshot(node.ipAddress, credential, node.id)
       : null;
     const now = new Date();
@@ -678,21 +826,31 @@ async function pollNodeReal(node: {
       })
       .where(eq(nodesTable.id, node.id));
 
-    await upsertInterfaces(node.id, snmp?.interfaces, now);
-    await syncEnvironmentSensors(node.id, snmp, now);
-    await syncHardwareComponents(node.id, snmp, now);
-    await syncL2Inventory(node.id, snmp, now);
-    await syncTopologyFromLldp({
-      nodeId: node.id,
-      interfaces: snmp?.interfaces,
-      neighbors: snmp?.lldpNeighbors,
-    });
-    await syncTopologyFromCdp({
-      nodeId: node.id,
-      interfaces: snmp?.interfaces,
-      neighbors: snmp?.cdpNeighbors,
-    });
-    const portAnalytics = await persistNodePortProfiles(node.id, now);
+    let portAlerts: Array<{
+      type: string;
+      severity: "critical" | "warning" | "info";
+      message: string;
+    }> = [];
+    if (snmp) {
+      detailedPollState.set(node.id, now.getTime());
+      await upsertInterfaces(node.id, snmp.interfaces, now);
+      await syncEnvironmentSensors(node.id, snmp, now);
+      await syncHardwareComponents(node.id, snmp, now);
+      await syncL2Inventory(node.id, snmp, now);
+      await syncL3Inventory(node.id, snmp, now);
+      await syncTopologyFromLldp({
+        nodeId: node.id,
+        interfaces: snmp.interfaces,
+        neighbors: snmp.lldpNeighbors,
+      });
+      await syncTopologyFromCdp({
+        nodeId: node.id,
+        interfaces: snmp.interfaces,
+        neighbors: snmp.cdpNeighbors,
+      });
+      const portAnalytics = await persistNodePortProfiles(node.id, now);
+      portAlerts = portAnalytics.alerts;
+    }
 
     await storeMetrics({
       nodeId: node.id,
@@ -725,7 +883,7 @@ async function pollNodeReal(node: {
     await createL2ProfileAlerts({
       nodeId: node.id,
       nodeName: snmp?.sysName?.trim() || node.name,
-      issues: portAnalytics.alerts,
+      issues: portAlerts,
     });
 
     wsBroadcast({
@@ -876,17 +1034,19 @@ async function pollNode(node: {
   ipAddress: string;
   name: string;
   credentialId: string | null;
+  pollingProfile: PollingProfile | null;
   snmpVersion: "v1" | "v2c" | "v3" | null;
   snmpCommunity: string | null;
-}): Promise<boolean> {
+}, forceDetailed = false): Promise<boolean> {
   if (useSimulatedPolling()) {
     return pollNodeSimulated(node.id, node.ipAddress, node.name);
   }
-  return pollNodeReal(node);
+  return pollNodeReal(node, forceDetailed);
 }
 
 export async function runPollCycle(nodeIds?: string[]) {
   const start = Date.now();
+  const forceDetailed = Boolean(nodeIds && nodeIds.length > 0);
 
   const nodes = await db
     .select({
@@ -894,28 +1054,43 @@ export async function runPollCycle(nodeIds?: string[]) {
       ipAddress: nodesTable.ipAddress,
       name: nodesTable.name,
       credentialId: nodesTable.credentialId,
+      pollingProfile: nodesTable.pollingProfile,
       snmpVersion: nodesTable.snmpVersion,
       snmpCommunity: nodesTable.snmpCommunity,
+      lastPolled: nodesTable.lastPolled,
     })
     .from(nodesTable)
-    .where(nodeIds && nodeIds.length > 0 ? sql`${nodesTable.id} = ANY(${nodeIds})` : undefined);
+    .where(nodeIds && nodeIds.length > 0 ? inArray(nodesTable.id, nodeIds) : undefined);
 
-  state.queueDepth = nodes.length;
+  const dueNodes = forceDetailed
+    ? nodes
+    : nodes.filter((node) =>
+        shouldPollNodeNow({
+          lastPolled: node.lastPolled,
+          pollingProfile: node.pollingProfile,
+          force: forceDetailed,
+        }),
+      );
 
-  const BATCH_SIZE = useSimulatedPolling() ? 100 : 12;
-  for (let i = 0; i < nodes.length; i += BATCH_SIZE) {
-    const batch = nodes.slice(i, i + BATCH_SIZE);
-    await Promise.all(batch.map((n) => pollNode(n)));
-    state.queueDepth = Math.max(0, nodes.length - i - BATCH_SIZE);
+  state.queueDepth = dueNodes.length;
+
+  const BATCH_SIZE = getPollerBatchSize();
+  for (let i = 0; i < dueNodes.length; i += BATCH_SIZE) {
+    const batch = dueNodes.slice(i, i + BATCH_SIZE);
+    await Promise.all(batch.map((n) => pollNode(n, forceDetailed)));
+    state.queueDepth = Math.max(0, dueNodes.length - i - BATCH_SIZE);
   }
 
   state.lastCycleMs = Date.now() - start;
-  return nodes.length;
+  return dueNodes.length;
 }
 
 export function startPoller() {
   if (state.running) return;
   state.running = true;
+  const pollIntervalMs = getPollerIntervalMs();
+  const batchSize = getPollerBatchSize();
+  const detailedPollIntervalMs = getDetailedPollIntervalMs();
 
   rateInterval = setInterval(() => {
     state.pollsPerSecond = state.pollsThisSecond;
@@ -928,12 +1103,23 @@ export function startPoller() {
     } catch (err) {
       logger.error({ err }, "Poll cycle error");
     }
-  }, 30000);
+  }, pollIntervalMs);
 
   runPollCycle().catch(err => logger.error({ err }, "Initial poll cycle failed"));
 
   logger.info(
-    { mode: useSimulatedPolling() ? "simulated" : "snmp+icmp" },
+    {
+      mode: useSimulatedPolling() ? "simulated" : "snmp+icmp",
+      pollIntervalMs,
+      batchSize,
+      detailedPollIntervalMs,
+      profileSchedules: {
+        critical: getProfileSchedule("critical"),
+        standard: getProfileSchedule("standard"),
+        lowImpact: getProfileSchedule("low_impact"),
+        inventoryScheduled: getProfileSchedule("inventory_scheduled"),
+      },
+    },
     "Poller started",
   );
 }

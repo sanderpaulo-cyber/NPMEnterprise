@@ -24,6 +24,23 @@ interface EnrichedAlert {
   isHeuristic: boolean;
   recommendedAction: string;
   quickChecks: string[];
+  collectionSummary: string;
+  collectionSources: string[];
+  resolutionSequence: string[];
+  inventoryContext: {
+    ipAddress?: string | null;
+    vendor?: string | null;
+    model?: string | null;
+    firmwareVersion?: string | null;
+    softwareVersion?: string | null;
+    hardwareRevision?: string | null;
+    serialNumber?: string | null;
+    serviceTag?: string | null;
+  };
+  suggestedCommands: Array<{
+    title: string;
+    commands: string[];
+  }>;
 }
 
 interface AlertListResponse {
@@ -241,6 +258,29 @@ export default function Alerts() {
                           <div className="flex-1">
                             <h4 className="text-base font-semibold text-foreground">{alert.nodeName}</h4>
                             <p className="text-sm text-muted-foreground mt-1">{alert.message}</p>
+                            <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                              {alert.inventoryContext.ipAddress ? (
+                                <span className="rounded border border-border/50 bg-background/30 px-2 py-1 font-mono">
+                                  IP {alert.inventoryContext.ipAddress}
+                                </span>
+                              ) : null}
+                              {alert.inventoryContext.vendor ? (
+                                <span className="rounded border border-border/50 bg-background/30 px-2 py-1">
+                                  {alert.inventoryContext.vendor}
+                                  {alert.inventoryContext.model ? ` / ${alert.inventoryContext.model}` : ""}
+                                </span>
+                              ) : null}
+                              {alert.inventoryContext.firmwareVersion ? (
+                                <span className="rounded border border-border/50 bg-background/30 px-2 py-1 font-mono">
+                                  FW {alert.inventoryContext.firmwareVersion}
+                                </span>
+                              ) : null}
+                              {alert.inventoryContext.softwareVersion ? (
+                                <span className="rounded border border-border/50 bg-background/30 px-2 py-1 font-mono">
+                                  SW {alert.inventoryContext.softwareVersion}
+                                </span>
+                              ) : null}
+                            </div>
                             <div className="mt-3 rounded-lg border border-border/50 bg-background/40 p-3 text-sm">
                               <div className="mb-1 flex items-center gap-2 font-medium text-foreground">
                                 <Wrench className="h-4 w-4" /> Tratativa recomendada
@@ -252,6 +292,40 @@ export default function Alerts() {
                                 ))}
                               </div>
                             </div>
+                            <div className="mt-3 rounded-lg border border-border/50 bg-background/30 p-3 text-sm">
+                              <div className="font-medium text-foreground">Como a plataforma obteve inventario, versao e firmware</div>
+                              <p className="mt-1 text-muted-foreground">{alert.collectionSummary}</p>
+                              <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                                {alert.collectionSources.map((item) => (
+                                  <div key={`${alert.id}:source:${item}`}>- {item}</div>
+                                ))}
+                              </div>
+                            </div>
+                            <div className="mt-3 rounded-lg border border-border/50 bg-background/30 p-3 text-sm">
+                              <div className="font-medium text-foreground">Sequencia sugerida para resolucao</div>
+                              <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                                {alert.resolutionSequence.map((item, index) => (
+                                  <div key={`${alert.id}:step:${index}`}>{index + 1}. {item}</div>
+                                ))}
+                              </div>
+                            </div>
+                            {alert.suggestedCommands.length > 0 ? (
+                              <div className="mt-3 rounded-lg border border-border/50 bg-background/30 p-3 text-sm">
+                                <div className="font-medium text-foreground">Comandos sugeridos</div>
+                                <div className="mt-3 space-y-3">
+                                  {alert.suggestedCommands.map((block) => (
+                                    <div key={`${alert.id}:cmd:${block.title}`} className="rounded border border-border/40 bg-background/40 p-3">
+                                      <div className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                                        {block.title}
+                                      </div>
+                                      <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-xs text-muted-foreground">
+                                        {block.commands.join("\n")}
+                                      </pre>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
                             <div className="flex flex-wrap items-center gap-4 mt-2 text-xs text-muted-foreground font-mono">
                               <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {format(new Date(alert.createdAt), 'MMM d, HH:mm:ss')}</span>
                               {alert.acknowledged && alert.acknowledgedAt ? (

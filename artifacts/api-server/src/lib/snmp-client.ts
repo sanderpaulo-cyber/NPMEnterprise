@@ -43,6 +43,8 @@ export interface SnmpPollSnapshot extends SnmpIdentity {
   arpEntries?: SnmpArpEntry[];
   macEntries?: SnmpMacEntry[];
   vlans?: SnmpVlan[];
+  interfaceAddresses?: SnmpInterfaceAddress[];
+  routes?: SnmpRoute[];
 }
 
 export interface SnmpInterfaceSnapshot {
@@ -99,6 +101,27 @@ export interface SnmpMacEntry {
 export interface SnmpVlan {
   vlanId: number;
   name?: string | null;
+}
+
+export interface SnmpInterfaceAddress {
+  ifIndex?: number | null;
+  interfaceName?: string | null;
+  ipAddress: string;
+  subnetMask?: string | null;
+  prefixLength?: number | null;
+  addressType?: string | null;
+}
+
+export interface SnmpRoute {
+  destination: string;
+  subnetMask?: string | null;
+  prefixLength?: number | null;
+  nextHop?: string | null;
+  ifIndex?: number | null;
+  interfaceName?: string | null;
+  metric?: number | null;
+  routeType?: string | null;
+  protocol?: string | null;
 }
 
 export interface SnmpEnvironmentSensor {
@@ -229,6 +252,16 @@ const ENTITY_SENSOR_PRECISION_BASE = "1.3.6.1.2.1.99.1.1.1.1.3";
 const ENTITY_SENSOR_VALUE_BASE = "1.3.6.1.2.1.99.1.1.1.1.4";
 const ENTITY_SENSOR_OPER_STATUS_BASE = "1.3.6.1.2.1.99.1.1.1.1.5";
 const ENTITY_SENSOR_UNITS_DISPLAY_BASE = "1.3.6.1.2.1.99.1.1.1.1.6";
+const IP_AD_ENT_ADDR_BASE = "1.3.6.1.2.1.4.20.1.1";
+const IP_AD_ENT_IFINDEX_BASE = "1.3.6.1.2.1.4.20.1.2";
+const IP_AD_ENT_NETMASK_BASE = "1.3.6.1.2.1.4.20.1.3";
+const IP_ROUTE_DEST_BASE = "1.3.6.1.2.1.4.21.1.1";
+const IP_ROUTE_IFINDEX_BASE = "1.3.6.1.2.1.4.21.1.2";
+const IP_ROUTE_METRIC1_BASE = "1.3.6.1.2.1.4.21.1.3";
+const IP_ROUTE_NEXTHOP_BASE = "1.3.6.1.2.1.4.21.1.7";
+const IP_ROUTE_TYPE_BASE = "1.3.6.1.2.1.4.21.1.8";
+const IP_ROUTE_PROTO_BASE = "1.3.6.1.2.1.4.21.1.9";
+const IP_ROUTE_MASK_BASE = "1.3.6.1.2.1.4.21.1.11";
 
 const interfaceCounterCache = new Map<
   string,
@@ -376,6 +409,59 @@ function parseQBridgeIndex(suffix: string) {
 function parseDot1dMacIndex(suffix: string) {
   const macAddress = formatMacFromParts(suffix.split("."));
   return macAddress ? { macAddress } : null;
+}
+
+function normalizeIpAddress(value: unknown) {
+  const text = normalizeText(toText(value));
+  if (!text) return undefined;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(text)) return text;
+  return undefined;
+}
+
+function subnetMaskToPrefixLength(mask: string | undefined | null) {
+  if (!mask) return undefined;
+  const octets = mask.split(".").map((part) => Number(part));
+  if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) {
+    return undefined;
+  }
+  return octets.reduce((sum, octet) => {
+    const bits = octet.toString(2).padStart(8, "0");
+    return sum + bits.split("").filter((bit) => bit === "1").length;
+  }, 0);
+}
+
+function mapRouteType(value: number | undefined) {
+  switch (value) {
+    case 2:
+      return "invalid";
+    case 3:
+      return "direct";
+    case 4:
+      return "indirect";
+    default:
+      return undefined;
+  }
+}
+
+function mapRouteProtocol(value: number | undefined) {
+  switch (value) {
+    case 2:
+      return "local";
+    case 3:
+      return "netmgmt";
+    case 4:
+      return "icmp";
+    case 8:
+      return "rip";
+    case 9:
+      return "is-is";
+    case 13:
+      return "ospf";
+    case 14:
+      return "bgp";
+    default:
+      return value != null ? `proto-${value}` : undefined;
+  }
 }
 
 function inferVendorAndModel(input: { sysDescr?: string; sysObjectId?: string }) {
@@ -1293,9 +1379,18 @@ async function readInterfaceRates(session: SnmpSession, cacheKey: string) {
     return { inOctets, outOctets } as const;
   };
 
-  let counters = await tryCounters(IF_HC_IN_BASE, IF_HC_OUT_BASE);
+  let counters: { inOctets: number; outOctets: number } | null = null;
+  try {
+    counters = await tryCounters(IF_HC_IN_BASE, IF_HC_OUT_BASE);
+  } catch {
+    counters = null;
+  }
   if (!counters) {
-    counters = await tryCounters(IF_IN_BASE, IF_OUT_BASE);
+    try {
+      counters = await tryCounters(IF_IN_BASE, IF_OUT_BASE);
+    } catch {
+      counters = null;
+    }
   }
   if (!counters) {
     return { interfaceInBps: undefined, interfaceOutBps: undefined };
@@ -1382,29 +1477,46 @@ async function readInterfaceInventory(
       in32,
       out32,
     ] = await Promise.all([
-      readTableAsMap(session, IF_NAME_BASE),
-      readTableAsMap(session, IF_DESCR_BASE),
-      readTableAsMap(session, IF_ALIAS_BASE),
-      readTableAsMap(session, IF_SPEED_BASE),
-      readTableAsMap(session, IF_HIGH_SPEED_BASE),
-      readTableAsMap(session, IF_ADMIN_STATUS_BASE),
-      readTableAsMap(session, IF_OPER_STATUS_BASE),
+      readTableAsMap(session, IF_NAME_BASE).catch(() => new Map<string, unknown>()),
+      readTableAsMap(session, IF_DESCR_BASE).catch(() => new Map<string, unknown>()),
+      readTableAsMap(session, IF_ALIAS_BASE).catch(() => new Map<string, unknown>()),
+      readTableAsMap(session, IF_SPEED_BASE).catch(() => new Map<string, unknown>()),
+      readTableAsMap(session, IF_HIGH_SPEED_BASE).catch(() => new Map<string, unknown>()),
+      readTableAsMap(session, IF_ADMIN_STATUS_BASE).catch(() => new Map<string, unknown>()),
+      readTableAsMap(session, IF_OPER_STATUS_BASE).catch(() => new Map<string, unknown>()),
       readTableAsMap(session, IF_HC_IN_BASE).catch(() => new Map<string, unknown>()),
       readTableAsMap(session, IF_HC_OUT_BASE).catch(() => new Map<string, unknown>()),
       readTableAsMap(session, IF_IN_BASE).catch(() => new Map<string, unknown>()),
       readTableAsMap(session, IF_OUT_BASE).catch(() => new Map<string, unknown>()),
     ]);
 
-    const indexes = Array.from(descr.keys())
+    const indexes = Array.from(
+      new Set([
+        ...names.keys(),
+        ...descr.keys(),
+        ...aliases.keys(),
+        ...speeds.keys(),
+        ...highSpeeds.keys(),
+        ...adminStatuses.keys(),
+        ...operStatuses.keys(),
+        ...hcIn.keys(),
+        ...hcOut.keys(),
+        ...in32.keys(),
+        ...out32.keys(),
+      ]),
+    )
       .map((index) => Number(index))
       .filter((index) => Number.isFinite(index))
       .sort((a, b) => a - b);
 
     return indexes.map((ifIndex) => {
       const key = String(ifIndex);
-      const name = toText(names.get(key)) || toText(descr.get(key)) || `if${key}`;
-      const description = toText(descr.get(key)) ?? null;
-      const alias = toText(aliases.get(key)) ?? null;
+      const name =
+        normalizeText(toText(names.get(key))) ||
+        normalizeText(toText(descr.get(key))) ||
+        `if${key}`;
+      const description = normalizeText(toText(descr.get(key))) ?? null;
+      const alias = normalizeText(toText(aliases.get(key))) ?? null;
       const speedFromHigh = toNumber(highSpeeds.get(key));
       const speedFromBase = toNumber(speeds.get(key));
       const speedBps =
@@ -1571,6 +1683,93 @@ async function readArpEntries(session: SnmpSession): Promise<SnmpArpEntry[]> {
       });
     }
     return entries;
+  } catch {
+    return [];
+  }
+}
+
+async function readInterfaceAddresses(
+  session: SnmpSession,
+  interfaceNameByIfIndex: Map<number, string>,
+): Promise<SnmpInterfaceAddress[]> {
+  try {
+    const [ifIndexes, masks] = await Promise.all([
+      readTableAsSuffixMap(session, IP_AD_ENT_IFINDEX_BASE).catch(() => new Map<string, unknown>()),
+      readTableAsSuffixMap(session, IP_AD_ENT_NETMASK_BASE).catch(() => new Map<string, unknown>()),
+    ]);
+
+    const addresses: SnmpInterfaceAddress[] = [];
+    for (const [suffix, ifIndexValue] of ifIndexes.entries()) {
+      const ipAddress = normalizeIpAddress(suffix);
+      const ifIndex = toNumber(ifIndexValue);
+      if (!ipAddress) continue;
+      const subnetMask = normalizeIpAddress(masks.get(suffix)) ?? null;
+      const prefixLength = subnetMaskToPrefixLength(subnetMask) ?? null;
+      addresses.push({
+        ifIndex: ifIndex ?? null,
+        interfaceName: ifIndex != null ? (interfaceNameByIfIndex.get(ifIndex) ?? null) : null,
+        ipAddress,
+        subnetMask,
+        prefixLength,
+        addressType: "ipv4",
+      });
+    }
+
+    return addresses.sort((left, right) => {
+      if ((left.ifIndex ?? 0) !== (right.ifIndex ?? 0)) {
+        return (left.ifIndex ?? 0) - (right.ifIndex ?? 0);
+      }
+      return left.ipAddress.localeCompare(right.ipAddress);
+    });
+  } catch {
+    return [];
+  }
+}
+
+async function readRoutes(
+  session: SnmpSession,
+  interfaceNameByIfIndex: Map<number, string>,
+): Promise<SnmpRoute[]> {
+  try {
+    const [routeIfIndexes, routeMetrics, routeNextHops, routeTypes, routeProtocols, routeMasks] =
+      await Promise.all([
+        readTableAsSuffixMap(session, IP_ROUTE_IFINDEX_BASE).catch(() => new Map<string, unknown>()),
+        readTableAsSuffixMap(session, IP_ROUTE_METRIC1_BASE).catch(() => new Map<string, unknown>()),
+        readTableAsSuffixMap(session, IP_ROUTE_NEXTHOP_BASE).catch(() => new Map<string, unknown>()),
+        readTableAsSuffixMap(session, IP_ROUTE_TYPE_BASE).catch(() => new Map<string, unknown>()),
+        readTableAsSuffixMap(session, IP_ROUTE_PROTO_BASE).catch(() => new Map<string, unknown>()),
+        readTableAsSuffixMap(session, IP_ROUTE_MASK_BASE).catch(() => new Map<string, unknown>()),
+      ]);
+
+    const routes: SnmpRoute[] = [];
+    for (const [suffix, ifIndexValue] of routeIfIndexes.entries()) {
+      const destination = normalizeIpAddress(suffix);
+      if (!destination) continue;
+      const ifIndex = toNumber(ifIndexValue);
+      const subnetMask = normalizeIpAddress(routeMasks.get(suffix)) ?? null;
+      const nextHop = normalizeIpAddress(routeNextHops.get(suffix)) ?? null;
+      routes.push({
+        destination,
+        subnetMask,
+        prefixLength: subnetMaskToPrefixLength(subnetMask) ?? null,
+        nextHop,
+        ifIndex: ifIndex ?? null,
+        interfaceName: ifIndex != null ? (interfaceNameByIfIndex.get(ifIndex) ?? null) : null,
+        metric: toNumber(routeMetrics.get(suffix)) ?? null,
+        routeType: mapRouteType(toNumber(routeTypes.get(suffix))) ?? null,
+        protocol: mapRouteProtocol(toNumber(routeProtocols.get(suffix))) ?? null,
+      });
+    }
+
+    return routes.sort((left, right) => {
+      if (left.destination !== right.destination) {
+        return left.destination.localeCompare(right.destination);
+      }
+      if ((left.prefixLength ?? 0) !== (right.prefixLength ?? 0)) {
+        return (right.prefixLength ?? 0) - (left.prefixLength ?? 0);
+      }
+      return (left.nextHop ?? "").localeCompare(right.nextHop ?? "");
+    });
   } catch {
     return [];
   }
@@ -1751,10 +1950,25 @@ export async function fetchSnmpPollSnapshot(
         readArpEntries(session),
         readVlans(session),
       ]);
+    let stableInterfaces = interfaces;
+    if (stableInterfaces.length === 0 && (identity.interfaceCount ?? 0) > 0) {
+      const fallbackSession = createSession(target, credential);
+      try {
+        stableInterfaces = await readInterfaceInventory(fallbackSession, cacheKey);
+      } catch {
+        stableInterfaces = interfaces;
+      } finally {
+        fallbackSession.close();
+      }
+    }
     const interfaceNameByIfIndex = new Map(
-      interfaces.map((iface) => [iface.ifIndex, iface.name] as const),
+      stableInterfaces.map((iface) => [iface.ifIndex, iface.name] as const),
     );
-    const macEntries = await readMacEntries(session, interfaceNameByIfIndex);
+    const [interfaceAddresses, routes, macEntries] = await Promise.all([
+      readInterfaceAddresses(session, interfaceNameByIfIndex),
+      readRoutes(session, interfaceNameByIfIndex),
+      readMacEntries(session, interfaceNameByIfIndex),
+    ]);
 
     return {
       ...identity,
@@ -1778,12 +1992,14 @@ export async function fetchSnmpPollSnapshot(
       fanSensors: environment.fanSensors,
       interfaceInBps: interfaceRates.interfaceInBps ?? null,
       interfaceOutBps: interfaceRates.interfaceOutBps ?? null,
-      interfaces,
+      interfaces: stableInterfaces,
       lldpNeighbors,
       cdpNeighbors,
       arpEntries,
       macEntries,
       vlans,
+      interfaceAddresses,
+      routes,
     };
   } catch {
     return null;

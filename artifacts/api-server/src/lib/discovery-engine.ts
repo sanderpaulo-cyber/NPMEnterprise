@@ -10,10 +10,12 @@ import {
   nodeArpEntriesTable,
   nodeEnvironmentSensorsTable,
   nodeHardwareComponentsTable,
+  nodeInterfaceAddressesTable,
   nodeInterfacesTable,
   nodeMacEntriesTable,
   nodePortObservationsTable,
   nodePortProfilesTable,
+  nodeRoutesTable,
   nodeVlansTable,
   nodesTable,
   snmpCredentialsTable,
@@ -26,8 +28,8 @@ import { logger } from "./logger";
 import { icmpPingOnce } from "./icmp-ping";
 import { fetchSnmpIdentity } from "./snmp-client";
 
-const DEFAULT_CONCURRENCY = 24;
-const DEFAULT_MAX_HOSTS = 4096;
+const DEFAULT_CONCURRENCY = 8;
+const DEFAULT_MAX_HOSTS = 1024;
 
 type NodeKind = "router" | "switch" | "firewall" | "server" | "unknown";
 
@@ -614,8 +616,10 @@ async function deleteNodesAndRelations(nodeIds: string[]) {
   await db.delete(nodeEnvironmentSensorsTable).where(inArray(nodeEnvironmentSensorsTable.nodeId, nodeIds));
   await db.delete(nodeHardwareComponentsTable).where(inArray(nodeHardwareComponentsTable.nodeId, nodeIds));
   await db.delete(nodeInterfacesTable).where(inArray(nodeInterfacesTable.nodeId, nodeIds));
+  await db.delete(nodeInterfaceAddressesTable).where(inArray(nodeInterfaceAddressesTable.nodeId, nodeIds));
   await db.delete(nodeArpEntriesTable).where(inArray(nodeArpEntriesTable.nodeId, nodeIds));
   await db.delete(nodeMacEntriesTable).where(inArray(nodeMacEntriesTable.nodeId, nodeIds));
+  await db.delete(nodeRoutesTable).where(inArray(nodeRoutesTable.nodeId, nodeIds));
   await db.delete(nodeVlansTable).where(inArray(nodeVlansTable.nodeId, nodeIds));
   await db.delete(nodePortObservationsTable).where(inArray(nodePortObservationsTable.nodeId, nodeIds));
   await db.delete(nodePortProfilesTable).where(inArray(nodePortProfilesTable.nodeId, nodeIds));

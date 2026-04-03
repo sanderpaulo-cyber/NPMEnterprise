@@ -5,6 +5,7 @@
  * Network Performance Management Enterprise API
  * OpenAPI spec version: 1.0.0
  */
+import type { CreateNodeRequestPollingProfile } from "./createNodeRequestPollingProfile";
 import type { CreateNodeRequestSnmpVersion } from "./createNodeRequestSnmpVersion";
 import type { CreateNodeRequestType } from "./createNodeRequestType";
 
@@ -16,4 +17,5 @@ export interface CreateNodeRequest {
   snmpCommunity?: string;
   location?: string;
   vendor?: string;
+  pollingProfile?: CreateNodeRequestPollingProfile;
 }

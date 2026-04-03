@@ -5,6 +5,12 @@ import { z } from "zod/v4";
 export const nodeTypeEnum = pgEnum("node_type", ["router", "switch", "firewall", "server", "unknown"]);
 export const nodeStatusEnum = pgEnum("node_status", ["up", "down", "warning", "unknown"]);
 export const snmpVersionEnum = pgEnum("snmp_version", ["v1", "v2c", "v3"]);
+export const nodePollingProfileEnum = pgEnum("node_polling_profile", [
+  "critical",
+  "standard",
+  "low_impact",
+  "inventory_scheduled",
+]);
 
 export const nodesTable = pgTable("nodes", {
   id: text("id").primaryKey(),
@@ -33,6 +39,7 @@ export const nodesTable = pgTable("nodes", {
   fanCount: integer("fan_count").default(0),
   fanHealthyCount: integer("fan_healthy_count").default(0),
   interfaceCount: integer("interface_count").default(0),
+  pollingProfile: nodePollingProfileEnum("polling_profile").notNull().default("standard"),
   snmpVersion: snmpVersionEnum("snmp_version").default("v2c"),
   snmpCommunity: text("snmp_community").default("public"),
   lastPolled: timestamp("last_polled"),

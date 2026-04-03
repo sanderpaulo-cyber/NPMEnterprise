@@ -5,6 +5,7 @@
  * Network Performance Management Enterprise API
  * OpenAPI spec version: 1.0.0
  */
+import type { NodePollingProfile } from "./nodePollingProfile";
 import type { NodeStatus } from "./nodeStatus";
 import type { NodeType } from "./nodeType";
 
@@ -22,6 +23,7 @@ export interface Node {
   cpuUsage?: number;
   memUsage?: number;
   interfaceCount?: number;
+  pollingProfile?: NodePollingProfile;
   lastPolled?: string;
   createdAt?: string;
 }

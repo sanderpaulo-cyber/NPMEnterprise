@@ -43,6 +43,13 @@ import { useToast } from "@/hooks/use-toast";
 const nodeTypes = ["router", "switch", "firewall", "server", "unknown"] as const;
 const statusTypes = ["up", "down", "warning", "unknown"] as const;
 const snmpVersions = ["v1", "v2c", "v3"] as const;
+const pollingProfiles = [
+  { value: "critical", label: "Critico" },
+  { value: "standard", label: "Padrao" },
+  { value: "low_impact", label: "Baixo impacto" },
+  { value: "inventory_scheduled", label: "Inventario agendado" },
+] as const;
+type PollingProfileValue = (typeof pollingProfiles)[number]["value"];
 
 function readSearchFromUrl() {
   return new URLSearchParams(window.location.search).get("q") ?? "";
@@ -59,12 +66,22 @@ export default function Nodes() {
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [addOpen, setAddOpen] = useState(false);
   const [discoveryOpen, setDiscoveryOpen] = useState(false);
-  const [createForm, setCreateForm] = useState({
+  const [createForm, setCreateForm] = useState<{
+    name: string;
+    ipAddress: string;
+    type: (typeof nodeTypes)[number];
+    vendor: string;
+    location: string;
+    pollingProfile: PollingProfileValue;
+    snmpVersion: (typeof snmpVersions)[number];
+    snmpCommunity: string;
+  }>({
     name: "",
     ipAddress: "",
     type: "router",
     vendor: "",
     location: "",
+    pollingProfile: "standard",
     snmpVersion: "v2c",
     snmpCommunity: "public",
   });
@@ -126,6 +143,7 @@ export default function Nodes() {
       type: "router",
       vendor: "",
       location: "",
+      pollingProfile: "standard",
       snmpVersion: "v2c",
       snmpCommunity: "public",
     });
@@ -141,6 +159,7 @@ export default function Nodes() {
           type: createForm.type as (typeof nodeTypes)[number],
           vendor: createForm.vendor.trim() || undefined,
           location: createForm.location.trim() || undefined,
+          pollingProfile: createForm.pollingProfile,
           snmpVersion: createForm.snmpVersion as (typeof snmpVersions)[number],
           snmpCommunity: createForm.snmpCommunity.trim() || undefined,
         },
@@ -409,6 +428,7 @@ export default function Nodes() {
                   <TableHead className="font-mono uppercase text-xs tracking-wider">IP Address</TableHead>
                   <TableHead className="font-mono uppercase text-xs tracking-wider">Type</TableHead>
                   <TableHead className="font-mono uppercase text-xs tracking-wider">Vendor</TableHead>
+                  <TableHead className="font-mono uppercase text-xs tracking-wider">Coleta</TableHead>
                   <TableHead className="font-mono uppercase text-xs tracking-wider text-right">CPU</TableHead>
                   <TableHead className="font-mono uppercase text-xs tracking-wider text-right">Memory</TableHead>
                   <TableHead className="font-mono uppercase text-xs tracking-wider text-right">Actions</TableHead>
@@ -424,6 +444,7 @@ export default function Nodes() {
                       <TableCell><div className="h-4 w-24 bg-muted animate-pulse rounded" /></TableCell>
                       <TableCell><div className="h-4 w-16 bg-muted animate-pulse rounded" /></TableCell>
                       <TableCell><div className="h-4 w-20 bg-muted animate-pulse rounded" /></TableCell>
+                      <TableCell><div className="h-4 w-24 bg-muted animate-pulse rounded" /></TableCell>
                       <TableCell><div className="h-4 w-10 bg-muted animate-pulse rounded ml-auto" /></TableCell>
                       <TableCell><div className="h-4 w-10 bg-muted animate-pulse rounded ml-auto" /></TableCell>
                       <TableCell></TableCell>
@@ -431,7 +452,7 @@ export default function Nodes() {
                   ))
                 ) : filteredNodes.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="h-32 text-center text-muted-foreground">
+                    <TableCell colSpan={10} className="h-32 text-center text-muted-foreground">
                       No nodes found matching your criteria.
                     </TableCell>
                   </TableRow>
@@ -452,6 +473,9 @@ export default function Nodes() {
                       <TableCell className="font-mono text-muted-foreground text-sm">{node.ipAddress}</TableCell>
                       <TableCell className="capitalize text-muted-foreground">{node.type}</TableCell>
                       <TableCell className="text-muted-foreground">{node.vendor || '-'}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {pollingProfiles.find((profile) => profile.value === node.pollingProfile)?.label ?? "Padrao"}
+                      </TableCell>
                       <TableCell className="text-right font-mono">
                         {node.cpuUsage != null ? (
                           <span className={node.cpuUsage > 80 ? "text-destructive" : ""}>
@@ -541,7 +565,10 @@ export default function Nodes() {
                 <Select
                   value={createForm.type}
                   onValueChange={(value) =>
-                    setCreateForm((prev) => ({ ...prev, type: value }))
+                    setCreateForm((prev) => ({
+                      ...prev,
+                      type: value as (typeof nodeTypes)[number],
+                    }))
                   }
                 >
                   <SelectTrigger>
@@ -579,11 +606,37 @@ export default function Nodes() {
                 />
               </div>
               <div className="space-y-2">
+                <Label>Perfil de coleta</Label>
+                <Select
+                  value={createForm.pollingProfile}
+                  onValueChange={(value) =>
+                    setCreateForm((prev) => ({
+                      ...prev,
+                      pollingProfile: value as PollingProfileValue,
+                    }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {pollingProfiles.map((profile) => (
+                      <SelectItem key={profile.value} value={profile.value}>
+                        {profile.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
                 <Label>SNMP Version</Label>
                 <Select
                   value={createForm.snmpVersion}
                   onValueChange={(value) =>
-                    setCreateForm((prev) => ({ ...prev, snmpVersion: value }))
+                    setCreateForm((prev) => ({
+                      ...prev,
+                      snmpVersion: value as (typeof snmpVersions)[number],
+                    }))
                   }
                 >
                   <SelectTrigger>

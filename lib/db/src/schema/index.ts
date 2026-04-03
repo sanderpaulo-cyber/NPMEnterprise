@@ -6,5 +6,6 @@ export * from "./alerts";
 export * from "./discovery";
 export * from "./interfaces";
 export * from "./l2";
+export * from "./l3";
 export * from "./environment";
 export * from "./hardware";

@@ -453,6 +453,9 @@ components:
           type: number
         interfaceCount:
           type: number
+        pollingProfile:
+          type: string
+          enum: [critical, standard, low_impact, inventory_scheduled]
         lastPolled:
           type: string
         createdAt:
@@ -478,6 +481,9 @@ components:
           type: string
         vendor:
           type: string
+        pollingProfile:
+          type: string
+          enum: [critical, standard, low_impact, inventory_scheduled]
       required: [name, ipAddress, type]
 
     NodeListResponse:

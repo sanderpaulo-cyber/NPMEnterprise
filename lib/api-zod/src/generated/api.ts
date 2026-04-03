@@ -44,6 +44,9 @@ export const ListNodesResponse = zod.object({
       cpuUsage: zod.number().optional(),
       memUsage: zod.number().optional(),
       interfaceCount: zod.number().optional(),
+      pollingProfile: zod
+        .enum(["critical", "standard", "low_impact", "inventory_scheduled"])
+        .optional(),
       lastPolled: zod.string().optional(),
       createdAt: zod.string().optional(),
     }),
@@ -64,6 +67,9 @@ export const CreateNodeBody = zod.object({
   snmpCommunity: zod.string().optional(),
   location: zod.string().optional(),
   vendor: zod.string().optional(),
+  pollingProfile: zod
+    .enum(["critical", "standard", "low_impact", "inventory_scheduled"])
+    .optional(),
 });
 
 /**
@@ -87,6 +93,9 @@ export const GetNodeResponse = zod.object({
   cpuUsage: zod.number().optional(),
   memUsage: zod.number().optional(),
   interfaceCount: zod.number().optional(),
+  pollingProfile: zod
+    .enum(["critical", "standard", "low_impact", "inventory_scheduled"])
+    .optional(),
   lastPolled: zod.string().optional(),
   createdAt: zod.string().optional(),
 });
@@ -200,6 +209,9 @@ export const GetTopologyResponse = zod.object({
       cpuUsage: zod.number().optional(),
       memUsage: zod.number().optional(),
       interfaceCount: zod.number().optional(),
+      pollingProfile: zod
+        .enum(["critical", "standard", "low_impact", "inventory_scheduled"])
+        .optional(),
       lastPolled: zod.string().optional(),
       createdAt: zod.string().optional(),
     }),

@@ -7,10 +7,12 @@ import {
   nodeArpEntriesTable,
   nodeEnvironmentSensorsTable,
   nodeHardwareComponentsTable,
+  nodeInterfaceAddressesTable,
   nodeInterfacesTable,
   nodeMacEntriesTable,
   nodePortObservationsTable,
   nodePortProfilesTable,
+  nodeRoutesTable,
   nodeVlansTable,
   nodesTable,
   snmpCredentialsTable,
@@ -24,9 +26,20 @@ import {
   listNodePortObservations,
   listNodePortProfiles,
 } from "../lib/l2-correlation";
+import { runPollCycle } from "../lib/poller";
 import { fetchSnmpDiagnostics } from "../lib/snmp-client";
 
 const router: IRouter = Router();
+const pollingProfiles = [
+  "critical",
+  "standard",
+  "low_impact",
+  "inventory_scheduled",
+] as const;
+
+function isValidPollingProfile(value: unknown): value is (typeof pollingProfiles)[number] {
+  return typeof value === "string" && pollingProfiles.includes(value as (typeof pollingProfiles)[number]);
+}
 
 async function resolveNodeCredential(node: {
   credentialId: string | null;
@@ -56,8 +69,8 @@ async function resolveNodeCredential(node: {
       privProtocol: "none",
       privPassword: null,
       port: 161,
-      timeoutMs: 2000,
-      retries: 1,
+      timeoutMs: 5000,
+      retries: 2,
       enabled: true,
       createdAt: new Date(),
     };
@@ -111,6 +124,7 @@ router.get("/", async (req, res): Promise<void> => {
         fanCount: n.fanCount,
         fanHealthyCount: n.fanHealthyCount,
         interfaceCount: n.interfaceCount,
+        pollingProfile: n.pollingProfile,
         lastPolled: n.lastPolled?.toISOString(),
         createdAt: n.createdAt.toISOString(),
       })),
@@ -266,6 +280,79 @@ router.get("/:nodeId/interfaces", async (req, res): Promise<void> => {
   } catch (err) {
     req.log.error({ err }, "Failed to get node interfaces");
     res.status(500).json({ error: "Failed to get node interfaces" });
+    return;
+  }
+});
+
+router.get("/:nodeId/interface-addresses", async (req, res): Promise<void> => {
+  try {
+    const { nodeId } = req.params;
+    const entries = await db
+      .select()
+      .from(nodeInterfaceAddressesTable)
+      .where(eq(nodeInterfaceAddressesTable.nodeId, nodeId))
+      .orderBy(
+        nodeInterfaceAddressesTable.ifIndex,
+        nodeInterfaceAddressesTable.prefixLength,
+        nodeInterfaceAddressesTable.ipAddress,
+      );
+
+    res.json({
+      nodeId,
+      entries: entries.map((entry) => ({
+        id: entry.id,
+        ifIndex: entry.ifIndex,
+        interfaceName: entry.interfaceName,
+        ipAddress: entry.ipAddress,
+        subnetMask: entry.subnetMask,
+        prefixLength: entry.prefixLength,
+        addressType: entry.addressType,
+        updatedAt: entry.updatedAt.toISOString(),
+      })),
+    });
+    return;
+  } catch (err) {
+    req.log.error({ err }, "Failed to get node interface addresses");
+    res.status(500).json({ error: "Failed to get node interface addresses" });
+    return;
+  }
+});
+
+router.get("/:nodeId/routes", async (req, res): Promise<void> => {
+  try {
+    const { nodeId } = req.params;
+    const entries = await db
+      .select()
+      .from(nodeRoutesTable)
+      .where(eq(nodeRoutesTable.nodeId, nodeId))
+      .orderBy(nodeRoutesTable.destination, nodeRoutesTable.prefixLength, nodeRoutesTable.nextHop);
+
+    res.json({
+      nodeId,
+      summary: {
+        totalRoutes: entries.length,
+        defaultRoutes: entries.filter((entry) => entry.destination === "0.0.0.0").length,
+        connectedRoutes: entries.filter((entry) => entry.routeType === "direct").length,
+        staticRoutes: entries.filter((entry) => entry.protocol === "netmgmt").length,
+      },
+      entries: entries.map((entry) => ({
+        id: entry.id,
+        destination: entry.destination,
+        subnetMask: entry.subnetMask,
+        prefixLength: entry.prefixLength,
+        nextHop: entry.nextHop,
+        ifIndex: entry.ifIndex,
+        interfaceName: entry.interfaceName,
+        metric: entry.metric,
+        routeType: entry.routeType,
+        protocol: entry.protocol,
+        updatedAt: entry.updatedAt.toISOString(),
+      })),
+    });
+    return;
+  } catch (err) {
+    req.log.error({ err }, "Failed to get node routes");
+    res.status(500).json({ error: "Failed to get node routes" });
     return;
   }
 });
@@ -479,9 +566,13 @@ router.get("/:nodeId/access-history", async (req, res): Promise<void> => {
 
 router.post("/", async (req, res): Promise<void> => {
   try {
-    const { name, ipAddress, type, snmpVersion, snmpCommunity, location, vendor } = req.body;
+    const { name, ipAddress, type, snmpVersion, snmpCommunity, location, vendor, pollingProfile } = req.body;
     if (!name || !ipAddress || !type) {
       res.status(400).json({ error: "name, ipAddress, and type are required" });
+      return;
+    }
+    if (pollingProfile != null && !isValidPollingProfile(pollingProfile)) {
+      res.status(400).json({ error: "Invalid pollingProfile" });
       return;
     }
     const id = randomUUID();
@@ -489,15 +580,273 @@ router.post("/", async (req, res): Promise<void> => {
       id, name, ipAddress,
       type: type as "router" | "switch" | "firewall" | "server" | "unknown",
       status: "unknown",
+      pollingProfile: pollingProfile ?? "standard",
       snmpVersion: snmpVersion ?? "v2c",
       snmpCommunity: snmpCommunity ?? "public",
       location, vendor,
     }).returning();
-    res.status(201).json({ ...node, lastPolled: node.lastPolled?.toISOString(), createdAt: node.createdAt.toISOString() });
+
+    try {
+      await runPollCycle([id]);
+    } catch (pollErr) {
+      req.log.warn({ err: pollErr, nodeId: id }, "Initial poll after node creation failed");
+    }
+
+    const [updatedNode] = await db.select().from(nodesTable).where(eq(nodesTable.id, id)).limit(1);
+    const responseNode = updatedNode ?? node;
+    res.status(201).json({
+      ...responseNode,
+      lastPolled: responseNode.lastPolled?.toISOString(),
+      createdAt: responseNode.createdAt.toISOString(),
+    });
     return;
   } catch (err) {
     req.log.error({ err }, "Failed to create node");
     res.status(500).json({ error: "Failed to create node" });
+    return;
+  }
+});
+
+router.patch("/:nodeId/snmp", async (req, res): Promise<void> => {
+  try {
+    const { nodeId } = req.params;
+    const [existingNode] = await db.select().from(nodesTable).where(eq(nodesTable.id, nodeId)).limit(1);
+    if (!existingNode) {
+      res.status(404).json({ error: "Node not found" });
+      return;
+    }
+
+    const {
+      credentialId,
+      snmpVersion,
+      snmpCommunity,
+    } = req.body ?? {};
+
+    const normalizedCredentialId =
+      credentialId == null || String(credentialId).trim() === ""
+        ? null
+        : String(credentialId).trim();
+
+    if (normalizedCredentialId) {
+      const [credential] = await db
+        .select()
+        .from(snmpCredentialsTable)
+        .where(eq(snmpCredentialsTable.id, normalizedCredentialId))
+        .limit(1);
+
+      if (!credential || !credential.enabled) {
+        res.status(400).json({ error: "SNMP credential is invalid or disabled" });
+        return;
+      }
+
+      await db
+        .update(nodesTable)
+        .set({
+          credentialId: credential.id,
+          snmpVersion: credential.version,
+          snmpCommunity:
+            credential.version === "v1" || credential.version === "v2c"
+              ? (credential.community ?? "public")
+              : null,
+        })
+        .where(eq(nodesTable.id, nodeId));
+    } else {
+      const normalizedVersion = snmpVersion ? String(snmpVersion).trim() : existingNode.snmpVersion;
+      const normalizedCommunity = snmpCommunity ? String(snmpCommunity).trim() : "";
+
+      if (normalizedVersion !== "v1" && normalizedVersion !== "v2c") {
+        res.status(400).json({
+          error: "Inline SNMP update requires snmpVersion v1 or v2c, or a saved credentialId",
+        });
+        return;
+      }
+
+      if (!normalizedCommunity) {
+        res.status(400).json({ error: "snmpCommunity is required for inline SNMP" });
+        return;
+      }
+
+      await db
+        .update(nodesTable)
+        .set({
+          credentialId: null,
+          snmpVersion: normalizedVersion,
+          snmpCommunity: normalizedCommunity,
+        })
+        .where(eq(nodesTable.id, nodeId));
+    }
+
+    try {
+      await runPollCycle([nodeId]);
+    } catch (pollErr) {
+      req.log.warn({ err: pollErr, nodeId }, "Poll after SNMP update failed");
+    }
+
+    const [updatedNode] = await db.select().from(nodesTable).where(eq(nodesTable.id, nodeId)).limit(1);
+    if (!updatedNode) {
+      res.status(404).json({ error: "Node not found after update" });
+      return;
+    }
+
+    res.json({
+      ...updatedNode,
+      lastPolled: updatedNode.lastPolled?.toISOString(),
+      createdAt: updatedNode.createdAt.toISOString(),
+    });
+    return;
+  } catch (err) {
+    req.log.error({ err }, "Failed to update node SNMP configuration");
+    res.status(500).json({ error: "Failed to update node SNMP configuration" });
+    return;
+  }
+});
+
+router.patch("/:nodeId/polling-profile", async (req, res): Promise<void> => {
+  try {
+    const { nodeId } = req.params;
+    const [existingNode] = await db.select().from(nodesTable).where(eq(nodesTable.id, nodeId)).limit(1);
+    if (!existingNode) {
+      res.status(404).json({ error: "Node not found" });
+      return;
+    }
+
+    const { pollingProfile } = req.body ?? {};
+    if (!isValidPollingProfile(pollingProfile)) {
+      res.status(400).json({ error: "Invalid pollingProfile" });
+      return;
+    }
+
+    await db
+      .update(nodesTable)
+      .set({ pollingProfile })
+      .where(eq(nodesTable.id, nodeId));
+
+    try {
+      await runPollCycle([nodeId]);
+    } catch (pollErr) {
+      req.log.warn({ err: pollErr, nodeId }, "Poll after polling profile update failed");
+    }
+
+    const [updatedNode] = await db.select().from(nodesTable).where(eq(nodesTable.id, nodeId)).limit(1);
+    if (!updatedNode) {
+      res.status(404).json({ error: "Node not found after update" });
+      return;
+    }
+
+    res.json({
+      ...updatedNode,
+      lastPolled: updatedNode.lastPolled?.toISOString(),
+      createdAt: updatedNode.createdAt.toISOString(),
+    });
+    return;
+  } catch (err) {
+    req.log.error({ err }, "Failed to update node polling profile");
+    res.status(500).json({ error: "Failed to update node polling profile" });
+    return;
+  }
+});
+
+router.post("/:nodeId/snmp/test", async (req, res): Promise<void> => {
+  try {
+    const { nodeId } = req.params;
+    const [node] = await db.select().from(nodesTable).where(eq(nodesTable.id, nodeId)).limit(1);
+    if (!node) {
+      res.status(404).json({ error: "Node not found" });
+      return;
+    }
+
+    const { credentialId, snmpVersion, snmpCommunity } = req.body ?? {};
+    const normalizedCredentialId =
+      credentialId == null || String(credentialId).trim() === ""
+        ? null
+        : String(credentialId).trim();
+
+    let credential: SnmpCredentialRecord | null = null;
+
+    if (normalizedCredentialId) {
+      const [savedCredential] = await db
+        .select()
+        .from(snmpCredentialsTable)
+        .where(eq(snmpCredentialsTable.id, normalizedCredentialId))
+        .limit(1);
+
+      if (!savedCredential || !savedCredential.enabled) {
+        res.status(400).json({ error: "SNMP credential is invalid or disabled" });
+        return;
+      }
+
+      credential = savedCredential;
+    } else {
+      const normalizedVersion = snmpVersion ? String(snmpVersion).trim() : node.snmpVersion;
+      const normalizedCommunity = snmpCommunity ? String(snmpCommunity).trim() : "";
+
+      if (normalizedVersion !== "v1" && normalizedVersion !== "v2c") {
+        res.status(400).json({
+          error: "Inline SNMP test requires snmpVersion v1 or v2c, or a saved credentialId",
+        });
+        return;
+      }
+
+      if (!normalizedCommunity) {
+        res.status(400).json({ error: "snmpCommunity is required for inline SNMP" });
+        return;
+      }
+
+      credential = {
+        id: `inline-${normalizedVersion}-${normalizedCommunity}`,
+        name: "inline-node-credential",
+        version: normalizedVersion,
+        community: normalizedCommunity,
+        username: null,
+        authProtocol: "none",
+        authPassword: null,
+        privProtocol: "none",
+        privPassword: null,
+        port: 161,
+        timeoutMs: 5000,
+        retries: 2,
+        enabled: true,
+        createdAt: new Date(),
+      };
+    }
+
+    const diagnostics = await fetchSnmpDiagnostics(node.ipAddress, credential);
+    if (!diagnostics) {
+      res.status(200).json({
+        nodeId,
+        target: node.ipAddress,
+        hasCredential: true,
+        credential: {
+          id: credential.id,
+          name: credential.name,
+          version: credential.version,
+          port: credential.port,
+          timeoutMs: credential.timeoutMs,
+          retries: credential.retries,
+        },
+        message: "Falha ao executar o diagnostico SNMP com a credencial informada.",
+      });
+      return;
+    }
+
+    res.json({
+      nodeId,
+      target: node.ipAddress,
+      hasCredential: true,
+      credential: {
+        id: credential.id,
+        name: credential.name,
+        version: credential.version,
+        port: credential.port,
+        timeoutMs: credential.timeoutMs,
+        retries: credential.retries,
+      },
+      diagnostics,
+    });
+    return;
+  } catch (err) {
+    req.log.error({ err }, "Failed to test node SNMP configuration");
+    res.status(500).json({ error: "Failed to test node SNMP configuration" });
     return;
   }
 });
@@ -508,8 +857,10 @@ router.delete("/:nodeId", async (req, res): Promise<void> => {
     await db.delete(nodeEnvironmentSensorsTable).where(eq(nodeEnvironmentSensorsTable.nodeId, nodeId));
     await db.delete(nodeHardwareComponentsTable).where(eq(nodeHardwareComponentsTable.nodeId, nodeId));
     await db.delete(nodeInterfacesTable).where(eq(nodeInterfacesTable.nodeId, nodeId));
+    await db.delete(nodeInterfaceAddressesTable).where(eq(nodeInterfaceAddressesTable.nodeId, nodeId));
     await db.delete(nodeArpEntriesTable).where(eq(nodeArpEntriesTable.nodeId, nodeId));
     await db.delete(nodeMacEntriesTable).where(eq(nodeMacEntriesTable.nodeId, nodeId));
+    await db.delete(nodeRoutesTable).where(eq(nodeRoutesTable.nodeId, nodeId));
     await db.delete(nodeVlansTable).where(eq(nodeVlansTable.nodeId, nodeId));
     await db.delete(nodePortObservationsTable).where(eq(nodePortObservationsTable.nodeId, nodeId));
     await db.delete(nodePortProfilesTable).where(eq(nodePortProfilesTable.nodeId, nodeId));
