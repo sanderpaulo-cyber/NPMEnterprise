@@ -18,6 +18,8 @@ O projeto foi organizado como monorepo `pnpm workspace` e hoje cobre:
 - topologia com correlacao LLDP/CDP
 - metricas historicas de CPU, memoria, temperatura e FAN
 - analise L2 com ARP, MAC table, VLANs e perfis de portas
+- autenticacao do dashboard (JWT + cookie HttpOnly) e API protegida quando ativada (`AUTH_ENABLED`)
+- paginas de login e definicoes, com administracao de utilizadores locais e LDAP opcional
 
 ## Arquitetura
 
@@ -134,6 +136,8 @@ DISCOVERY_HOST_CONCURRENCY=6
 LOG_LEVEL=info
 ```
 
+Para ativar autenticacao em ambiente real, copie tambem as variaveis do bloco **Autenticacao** em `.env.example` (`AUTH_ENABLED`, `AUTH_JWT_SECRET`, etc.).
+
 ### Variaveis de ambiente
 
 - `DATABASE_URL`: string de conexao com o PostgreSQL
@@ -155,6 +159,16 @@ LOG_LEVEL=info
 - `DISCOVERY_MAX_HOSTS_PER_RUN`: limite de IPs por execucao de descoberta
 - `DISCOVERY_HOST_CONCURRENCY`: concorrencia da descoberta
 - `LOG_LEVEL`: nivel de log da API
+
+Autenticacao (opcional; ver bloco completo em `.env.example`):
+
+- `AUTH_ENABLED`: `true` protege `/api/*` exceto health/readiness e `/api/auth/*`; `false` mantem a API aberta para desenvolvimento
+- `AUTH_JWT_SECRET`: obrigatorio com auth ativa (minimo 16 caracteres)
+- `AUTH_TOKEN_EXPIRY_HOURS`: horas de validade do JWT
+- `AUTH_BOOTSTRAP_USERNAME` / `AUTH_BOOTSTRAP_PASSWORD`: criacao do primeiro utilizador se `auth_users` estiver vazia
+- `AUTH_ALLOW_REGISTER`: permite registo na pagina `/login` quando `true`
+- `AUTH_LDAP_URL`, `AUTH_LDAP_USER_DN_TEMPLATE`: login LDAP apos falha de password local
+- `TRUST_PROXY`: hops atras de proxy reverso (cookies `Secure` / forwarding)
 
 Baseline recomendado para redes maiores:
 
@@ -229,6 +243,24 @@ Acessos padrao:
 5. Inicie o ambiente com `corepack pnpm dev`.
 6. Valide `GET /api/healthz` e `GET /api/readyz`.
 7. Abra o dashboard e comece a cadastrar nos ou rodar discovery.
+
+## Autenticacao do dashboard e da API
+
+1. Aplique o schema do banco (`corepack pnpm db:push`) para criar as tabelas de autenticacao e definicoes.
+2. No `.env`, defina `AUTH_ENABLED=true` e `AUTH_JWT_SECRET` com pelo menos 16 caracteres aleatorios.
+3. Crie o primeiro utilizador:
+   - variaveis `AUTH_BOOTSTRAP_USERNAME` / `AUTH_BOOTSTRAP_PASSWORD` na primeira subida com `auth_users` vazia, ou
+   - `npm run auth:create-user -- admin SuaPasswordForte`
+4. Reinicie a API. O dashboard passa a exigir login em `/login`. Utilizadores e opcoes administrativas ficam em `/settings`.
+
+Comandos uteis:
+
+```bash
+npm run auth:create-user -- <username> <password>
+npm run auth:reset
+```
+
+`auth:reset` remove utilizadores conforme o script de reset (ver comentarios em `.env.example`). LDAP e registo na pagina de login sao opcionais e estao documentados no mesmo ficheiro.
 
 ## Execucao para ambiente mais estavel
 
@@ -341,6 +373,8 @@ Observacoes:
 
 ## Modulos da interface
 
+- `/login`: autenticacao do operador
+- `/settings`: definicoes da aplicacao e gestao de utilizadores (conforme permissoes)
 - `/`: dashboard executivo e operacional
 - `/nodes`: inventario e cadastro de dispositivos
 - `/nodes/:id`: detalhe tecnico do dispositivo
@@ -362,6 +396,7 @@ Observacoes:
 
 ## Novidades da versao
 
+- **Autenticacao e seguranca**: login no dashboard (`/login`), JWT e cookie HttpOnly; API com gateway de auth quando `AUTH_ENABLED=true`; rotas `/api/auth/*`, definicoes e administracao de utilizadores em `/settings`; tabelas Drizzle `auth_users` e definicoes persistidas; scripts `npm run auth:create-user` e `npm run auth:reset`; LDAP opcional (variaveis em `.env.example`).
 - descoberta com suporte a `CIDR`, range de IP e roteador principal
 - limpeza de resultados de discovery para reexecutar coletas produtivas
 - remocao em lote em `Network Nodes` com alternancia entre `Remove selected` e `Remove all`
@@ -470,6 +505,9 @@ corepack pnpm docker:up
 corepack pnpm docker:down
 corepack pnpm typecheck
 corepack pnpm build
+npm run auth:create-user -- <user> <password>
+npm run auth:reset
+npm run cert:localhost
 ```
 
 Banco:
@@ -575,6 +613,7 @@ O dashboard gera saida em `artifacts/npm-dashboard/dist/public` e a API gera sai
 ## Seguranca
 
 - nao versione o `.env`
+- com autenticacao ativa, use `AUTH_JWT_SECRET` forte e rotacao periodica; em producao use HTTPS e `TRUST_PROXY` correto atras de reverse proxy
 - nao publique comunidades SNMP reais no repositorio
 - prefira credenciais dedicadas de leitura para SNMP
 
