@@ -7,7 +7,7 @@ export type DashboardLocalSettings = {
   interface: {
     theme: DashboardThemePreference;
     locale: DashboardLocalePreference;
-    /** 0 = usar staleTime padrão do QueryClient */
+    /** 0 = 30s. Valor > 0 = staleTime global do React Query (queries com staleTime próprio ignoram). */
     dataRefreshIntervalMs: number;
   };
   connection: {

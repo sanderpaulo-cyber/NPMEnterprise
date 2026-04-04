@@ -1,13 +1,10 @@
 import { defineConfig } from "drizzle-kit";
-import path from "path";
-import { fileURLToPath } from "url";
+import { applyRootEnvOverride } from "./src/apply-root-env-override";
+import { resolveMonorepoEnvPath } from "./src/resolve-monorepo-env-path";
 
-const currentDir = path.dirname(fileURLToPath(import.meta.url));
-
-try {
-  process.loadEnvFile(path.resolve(currentDir, "../..", ".env"));
-} catch {
-  // Optional local env file.
+const envPath = resolveMonorepoEnvPath(import.meta.url);
+if (envPath) {
+  applyRootEnvOverride(envPath);
 }
 
 if (!process.env.DATABASE_URL) {

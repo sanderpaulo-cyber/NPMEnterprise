@@ -3,7 +3,6 @@
  * Lista utilizadores em auth_users (sem revelar hash completo).
  * Uso: node ./scripts/auth-debug-list-users.cjs
  */
-const path = require("node:path");
 const { Pool } = require("pg");
 const { scryptSync, timingSafeEqual } = require("node:crypto");
 
@@ -24,12 +23,8 @@ function verifyPassword(plain, stored) {
   }
 }
 
-const root = path.resolve(__dirname, "..");
-try {
-  process.loadEnvFile(path.join(root, ".env"));
-} catch {
-  /* no .env */
-}
+const { applyRootEnv } = require("./apply-root-env.cjs");
+applyRootEnv();
 
 async function main() {
   const dbUrl = process.env.DATABASE_URL;

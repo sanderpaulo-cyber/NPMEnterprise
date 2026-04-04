@@ -1,40 +1,8 @@
 /* eslint-disable no-console */
 const { execFileSync, spawn } = require("child_process");
-const fs = require("node:fs");
-const path = require("node:path");
+const { applyRootEnv } = require("./apply-root-env.cjs");
 
-/**
- * Aplica chaves do .env da raiz sobre process.env (substitui existentes).
- * O `process.loadEnvFile` do Node não sobrescreve variáveis já definidas; no Windows
- * um DATABASE_URL global fazia a API ligar a outra base que `auth:reset` / Drizzle.
- */
-function applyRootEnvFile() {
-  const envPath = path.join(__dirname, "..", ".env");
-  let raw;
-  try {
-    raw = fs.readFileSync(envPath, "utf8");
-  } catch {
-    return;
-  }
-  for (const line of raw.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq === -1) continue;
-    const key = trimmed.slice(0, eq).trim();
-    if (!key) continue;
-    let val = trimmed.slice(eq + 1).trim();
-    if (
-      (val.startsWith('"') && val.endsWith('"')) ||
-      (val.startsWith("'") && val.endsWith("'"))
-    ) {
-      val = val.slice(1, -1);
-    }
-    process.env[key] = val;
-  }
-}
-
-applyRootEnvFile();
+applyRootEnv();
 
 const API_PORT = Number(process.env.API_PORT || 8080);
 const WEB_PORT = Number(process.env.WEB_PORT || 443);

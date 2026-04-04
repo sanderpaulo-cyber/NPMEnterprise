@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useHealthCheck } from "@workspace/api-client-react";
+import { setBaseUrl, useHealthCheck } from "@workspace/api-client-react";
 import { useWebSocket } from "@/hooks/use-websocket";
 import { useDashboardSettings } from "@/context/dashboard-settings-context";
 import { useToast } from "@/hooks/use-toast";
@@ -29,6 +29,10 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { authFetch } from "@/lib/auth-fetch";
 import { useAuth } from "@/context/auth-context";
 import { SettingsUsersPanel } from "@/components/settings-users-panel";
+import {
+  sanitizeApiBaseUrl,
+} from "@/lib/dashboard-local-settings";
+import type { DashboardLocalSettings } from "@/context/dashboard-settings-types";
 
 type AppSettingsResponse = {
   version: number;
@@ -70,7 +74,7 @@ async function deleteSettingKey(key: string) {
 
 export default function SettingsPage() {
   const { authRequired } = useAuth();
-  const { local, patchLocal, applyConnectionAndReload } = useDashboardSettings();
+  const { local, patchLocal } = useDashboardSettings();
   const { isConnected } = useWebSocket();
   const { data: health } = useHealthCheck();
   const { toast } = useToast();
@@ -85,6 +89,66 @@ export default function SettingsPage() {
   const [persistJson, setPersistJson] = useState("");
   const [newKey, setNewKey] = useState("");
   const [newValueJson, setNewValueJson] = useState("null");
+
+  const [ifaceDraft, setIfaceDraft] = useState<DashboardLocalSettings["interface"]>(
+    () => ({ ...local.interface }),
+  );
+  const [connDraft, setConnDraft] = useState(local.connection.apiBaseUrl);
+
+  useEffect(() => {
+    setIfaceDraft({ ...local.interface });
+  }, [local.interface.theme, local.interface.locale, local.interface.dataRefreshIntervalMs]);
+
+  useEffect(() => {
+    setConnDraft(local.connection.apiBaseUrl);
+  }, [local.connection.apiBaseUrl]);
+
+  const ifaceDirty = useMemo(
+    () =>
+      ifaceDraft.theme !== local.interface.theme ||
+      ifaceDraft.locale !== local.interface.locale ||
+      ifaceDraft.dataRefreshIntervalMs !== local.interface.dataRefreshIntervalMs,
+    [ifaceDraft, local.interface],
+  );
+
+  const connDirty = useMemo(
+    () =>
+      sanitizeApiBaseUrl(connDraft) !== sanitizeApiBaseUrl(local.connection.apiBaseUrl),
+    [connDraft, local.connection.apiBaseUrl],
+  );
+
+  function saveInterfacePreferences() {
+    patchLocal({ interface: { ...ifaceDraft } });
+    toast({
+      title: "Preferências guardadas",
+      description: "Guardado em localStorage neste browser.",
+    });
+  }
+
+  function resetInterfaceDraft() {
+    setIfaceDraft({ ...local.interface });
+  }
+
+  function saveConnectionLocalOnly() {
+    const cleaned = sanitizeApiBaseUrl(connDraft);
+    patchLocal({ connection: { ...local.connection, apiBaseUrl: cleaned } });
+    setConnDraft(cleaned);
+    toast({
+      title: "URL guardada localmente",
+      description: "Recarregue a página ou use «Aplicar e recarregar» para o cliente HTTP usar já este URL.",
+    });
+  }
+
+  function resetConnectionDraft() {
+    setConnDraft(local.connection.apiBaseUrl);
+  }
+
+  function applyConnectionUrlAndReload() {
+    const cleaned = sanitizeApiBaseUrl(connDraft);
+    patchLocal({ connection: { ...local.connection, apiBaseUrl: cleaned } });
+    setBaseUrl(cleaned.length > 0 ? cleaned : null);
+    window.location.reload();
+  }
 
   const persistedEntries = useMemo(
     () =>
@@ -201,23 +265,23 @@ export default function SettingsPage() {
             <CardHeader>
               <CardTitle>Interface (este browser)</CardTitle>
               <CardDescription>
-                Guardado em <code className="text-xs">localStorage</code>. O intervalo de
-                atualização prepara uso futuro com o React Query; após alterar, recarregue a página
-                se notar cache antigo.
+                Guardado em <code className="text-xs">localStorage</code>. Edite os valores e clique
+                em <strong className="font-medium">Guardar preferências</strong> para aplicar. O
+                intervalo define o <em>stale time</em> global do React Query (dados considerados
+                frescos). O idioma define o atributo <code className="text-xs">lang</code> do
+                documento (base para acessibilidade e futura tradução da UI).
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6 max-w-xl">
               <div className="space-y-2">
                 <Label>Tema</Label>
                 <Select
-                  value={local.interface.theme}
+                  value={ifaceDraft.theme}
                   onValueChange={(v) =>
-                    patchLocal({
-                      interface: {
-                        ...local.interface,
-                        theme: v as "system" | "light" | "dark",
-                      },
-                    })
+                    setIfaceDraft((d) => ({
+                      ...d,
+                      theme: v as "system" | "light" | "dark",
+                    }))
                   }
                 >
                   <SelectTrigger>
@@ -229,15 +293,23 @@ export default function SettingsPage() {
                     <SelectItem value="dark">Escuro</SelectItem>
                   </SelectContent>
                 </Select>
+                <p className="text-xs text-muted-foreground">
+                  <strong className="text-foreground">Claro</strong> — mesmos matizes do escuro, com
+                  saturação cerca de 70% da do escuro (HSL) e superfícies claras.{" "}
+                  <strong className="text-foreground">Sistema</strong> — em modo claro do SO, fundo
+                  branco neutro (sem matiz ardósia), distinto do Claro e do Escuro; com SO escuro,
+                  tema escuro.
+                </p>
               </div>
               <div className="space-y-2">
-                <Label>Idioma (preferência)</Label>
+                <Label>Idioma (documento / preferência)</Label>
                 <Select
-                  value={local.interface.locale}
+                  value={ifaceDraft.locale}
                   onValueChange={(v) =>
-                    patchLocal({
-                      interface: { ...local.interface, locale: v as "pt" | "en" },
-                    })
+                    setIfaceDraft((d) => ({
+                      ...d,
+                      locale: v as "pt" | "en",
+                    }))
                   }
                 >
                   <SelectTrigger>
@@ -256,19 +328,41 @@ export default function SettingsPage() {
                   type="number"
                   min={0}
                   step={1000}
-                  value={local.interface.dataRefreshIntervalMs}
+                  value={ifaceDraft.dataRefreshIntervalMs}
                   onChange={(e) =>
-                    patchLocal({
-                      interface: {
-                        ...local.interface,
-                        dataRefreshIntervalMs: Number.parseInt(e.target.value, 10) || 0,
-                      },
-                    })
+                    setIfaceDraft((d) => ({
+                      ...d,
+                      dataRefreshIntervalMs: Number.parseInt(e.target.value, 10) || 0,
+                    }))
                   }
                 />
                 <p className="text-xs text-muted-foreground">
-                  Use 0 para manter o padrão (30s de stale time nas queries).
+                  Valores &gt; 0: milissegundos até os dados serem considerados obsoletos e
+                  revalidados em segundo plano. Use 0 para manter 30s por omissão. Alguns ecrãs
+                  definem intervalo próprio e não seguem este valor.
                 </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 border-t border-border pt-4">
+                <Button
+                  type="button"
+                  onClick={saveInterfacePreferences}
+                  disabled={!ifaceDirty}
+                >
+                  Guardar preferências
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={resetInterfaceDraft}
+                  disabled={!ifaceDirty}
+                >
+                  Repor
+                </Button>
+                {ifaceDirty && (
+                  <span className="text-xs text-amber-600 dark:text-amber-500">
+                    Alterações por guardar
+                  </span>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -279,11 +373,13 @@ export default function SettingsPage() {
             <CardHeader>
               <CardTitle>Conexão com a API</CardTitle>
               <CardDescription>
-                URL base opcional para o cliente HTTP gerado. Vazio utiliza o mesmo host e o proxy{" "}
-                <code className="text-xs">/api</code> do Vite. Para sessão por cookie (login), deixe
-                vazio: um URL directo para outro host (ex. <code className="text-xs">127.0.0.1</code>{" "}
-                com página em <code className="text-xs">localhost</code>) impede o cookie{" "}
-                <code className="text-xs">ns_session</code>.
+                URL base para o cliente OpenAPI gerado (pedidos relativos <code className="text-xs">
+                  /api/…
+                </code>
+                ). Ao <strong className="font-medium">guardar</strong>, o URL passa a ser usado de
+                imediato por esse cliente. O login e alguns pedidos manuais continuam no mesmo
+                sítio que a página (cookie de sessão). Vazio = host actual com proxy{" "}
+                <code className="text-xs">/api</code>.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 max-w-2xl">
@@ -292,12 +388,8 @@ export default function SettingsPage() {
                 <Input
                   id="api-base"
                   placeholder="ex.: https://api.exemplo.com"
-                  value={local.connection.apiBaseUrl}
-                  onChange={(e) =>
-                    patchLocal({
-                      connection: { ...local.connection, apiBaseUrl: e.target.value },
-                    })
-                  }
+                  value={connDraft}
+                  onChange={(e) => setConnDraft(e.target.value)}
                 />
               </div>
               <div className="rounded-md border border-border bg-secondary/20 p-3 text-sm space-y-1">
@@ -312,13 +404,32 @@ export default function SettingsPage() {
                   </code>
                 </p>
               </div>
-              <Button
-                type="button"
-                onClick={() => applyConnectionAndReload()}
-                disabled={patchMutation.isPending}
-              >
-                Aplicar URL e recarregar
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={saveConnectionLocalOnly}
+                  disabled={!connDirty}
+                >
+                  Guardar na memória local
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={resetConnectionDraft}
+                  disabled={!connDirty}
+                >
+                  Repor
+                </Button>
+                <Button type="button" onClick={applyConnectionUrlAndReload}>
+                  Aplicar e recarregar
+                </Button>
+                {connDirty && (
+                  <span className="text-xs text-amber-600 dark:text-amber-500">
+                    URL por guardar
+                  </span>
+                )}
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -396,8 +507,9 @@ export default function SettingsPage() {
             <CardHeader>
               <CardTitle>Valores persistidos (PostgreSQL)</CardTitle>
               <CardDescription>
-                Chave/valor JSON partilhados via API. Adequado para flags operacionais e extensões
-                futuras; não coloque segredos sem autenticação na API.
+                Chave/valor JSON na base de dados, via API. Só alteram o comportamento do dashboard
+                se alguma funcionalidade estiver programada para ler essas chaves (não são mapeadas
+                automaticamente para a UI). Não coloque segredos sem autenticação na API.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">

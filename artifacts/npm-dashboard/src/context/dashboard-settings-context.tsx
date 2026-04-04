@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -30,12 +31,28 @@ const DashboardSettingsContext = createContext<DashboardSettingsContextValue | n
   null,
 );
 
+const THEME_CHOICE_ATTR = "data-theme-choice";
+
 function ThemeBinder({ theme }: { theme: DashboardThemePreference }) {
   const { setTheme } = useTheme();
 
-  useEffect(() => {
+  /*
+   * next-themes com SO claro coloca sempre class="light" para «Claro» e «Sistema» —
+   * as variáveis CSS eram iguais. data-theme-choice distingue a preferência gravada
+   * para paletas diferentes (Claro fixo vs. Sistema quando resolvido a claro).
+   */
+  useLayoutEffect(() => {
+    document.documentElement.setAttribute(THEME_CHOICE_ATTR, theme);
     setTheme(theme);
   }, [theme, setTheme]);
+
+  return null;
+}
+
+function LocaleBinder({ locale }: { locale: "pt" | "en" }) {
+  useEffect(() => {
+    document.documentElement.lang = locale === "en" ? "en" : "pt";
+  }, [locale]);
 
   return null;
 }
@@ -46,8 +63,18 @@ export function DashboardSettingsProvider({ children }: { children: ReactNode })
   );
 
   const setLocal = useCallback((next: DashboardLocalSettings) => {
-    saveDashboardLocalSettings(next);
-    setLocalState(next);
+    const cleaned: DashboardLocalSettings = {
+      ...next,
+      connection: {
+        ...next.connection,
+        apiBaseUrl: sanitizeApiBaseUrl(next.connection.apiBaseUrl ?? ""),
+      },
+    };
+    saveDashboardLocalSettings(cleaned);
+    setLocalState(cleaned);
+    setBaseUrl(
+      cleaned.connection.apiBaseUrl.length > 0 ? cleaned.connection.apiBaseUrl : null,
+    );
   }, []);
 
   const patchLocal = useCallback(
@@ -64,6 +91,11 @@ export function DashboardSettingsProvider({ children }: { children: ReactNode })
           },
         };
         saveDashboardLocalSettings(next);
+        if (partial.connection !== undefined) {
+          setBaseUrl(
+            next.connection.apiBaseUrl.length > 0 ? next.connection.apiBaseUrl : null,
+          );
+        }
         return next;
       });
     },
@@ -89,6 +121,7 @@ export function DashboardSettingsProvider({ children }: { children: ReactNode })
   return (
     <DashboardSettingsContext.Provider value={value}>
       <ThemeBinder theme={local.interface.theme} />
+      <LocaleBinder locale={local.interface.locale} />
       {children}
     </DashboardSettingsContext.Provider>
   );

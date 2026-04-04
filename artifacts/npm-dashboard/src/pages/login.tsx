@@ -126,7 +126,7 @@ export default function LoginPage() {
           <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-primary/30 bg-primary/10 shadow-inner">
             <Activity className="h-7 w-7 text-primary" strokeWidth={2.2} />
           </div>
-          <h1 className="font-semibold text-2xl tracking-tight text-foreground sm:text-3xl">
+          <h1 className="font-display text-2xl font-semibold tracking-tight text-foreground sm:text-[1.75rem]">
             Network Sentinel
           </h1>
           <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">

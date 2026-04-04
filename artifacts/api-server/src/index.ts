@@ -1,6 +1,4 @@
 import { createServer } from "http";
-import path from "path";
-import { fileURLToPath } from "url";
 import app from "./app";
 import { pool } from "@workspace/db";
 import { logger } from "./lib/logger";
@@ -11,13 +9,7 @@ import { seedDatabase } from "./lib/seed";
 import { isAuthEnabled, getJwtSecret } from "./lib/auth/config";
 import { ensureBootstrapAdmin } from "./lib/auth/bootstrap";
 
-const currentDir = path.dirname(fileURLToPath(import.meta.url));
-
-try {
-  process.loadEnvFile(path.resolve(currentDir, "../../..", ".env"));
-} catch {
-  // Optional local env file.
-}
+/** DATABASE_URL e restantes chaves do .env da raiz: override em @workspace/db antes do pool. */
 
 const rawPort = process.env["API_PORT"] ?? process.env["PORT"];
 

@@ -95,7 +95,12 @@ router.post(
         res.status(403).json({ error: "Conta desativada" });
         return;
       }
-      res.status(401).json({ error: "Credenciais invalidas" });
+      if (code === "AUTH_INVALID") {
+        res.status(401).json({ error: "Credenciais invalidas" });
+        return;
+      }
+      logger.error({ err: e }, "Login: erro inesperado");
+      res.status(500).json({ error: "Erro interno no login" });
     }
   },
 );

@@ -281,7 +281,8 @@ function buildHierarchicalGraph(
     if (!node) return;
     const x = (left + right) / 2;
     const y = topY + level * yGap;
-    positionedByNodeId.set(nodeId, { ...node, x, y, fx: x, fy: y });
+    /* Sem fx/fy: nós movem-se livremente; só posição inicial (o colector virtual mantém-se fixo). */
+    positionedByNodeId.set(nodeId, { ...node, x, y });
 
     const children = [...(childrenByNodeId.get(nodeId) ?? [])].sort((a, b) => {
       const leftNode = nodeById.get(a);
@@ -376,7 +377,22 @@ function statusFill(status: string, isVirtual?: boolean) {
 function trafficParticleColor(state: GraphLink["trafficState"]) {
   if (state === "hot") return "#ef4444";
   if (state === "warm") return "#f59e0b";
+  if (state === "idle") return "#64748b";
   return "#22c55e";
+}
+
+/** Partículas ao longo do link: mínimo 1 para mostrar fluxo; mais com carga (API). */
+function linkParticleCount(link: GraphLink): number {
+  if (link.trafficState === "idle" && link.animationLevel === 0) {
+    return 1;
+  }
+  return Math.min(8, Math.max(1, link.animationLevel + 1));
+}
+
+function linkParticleSpeed(link: GraphLink): number {
+  const level = Math.max(0, link.animationLevel);
+  const base = link.trafficState === "idle" ? 0.005 : 0.008;
+  return base + level * 0.006;
 }
 
 function roundRect(
@@ -429,6 +445,48 @@ function buildNodeLabel(node: TopologyNodeData) {
   `;
 }
 
+type PersistedNodePos = {
+  x: number;
+  y: number;
+  fx?: number;
+  fy?: number;
+};
+
+/** Mantém posições entre refetches da API (evita saltar para a árvore inicial). */
+function mergePersistedPositions(
+  nodes: GraphNode[],
+  store: Map<string, PersistedNodePos>,
+): void {
+  const ids = new Set(nodes.map((n) => n.id));
+  for (const id of [...store.keys()]) {
+    if (!ids.has(id)) store.delete(id);
+  }
+  for (const n of nodes) {
+    if (n.isVirtual) continue;
+    const p = store.get(n.id);
+    if (!p) continue;
+    n.x = p.x;
+    n.y = p.y;
+    if (p.fx !== undefined && p.fy !== undefined) {
+      n.fx = p.fx;
+      n.fy = p.fy;
+    } else {
+      n.fx = undefined;
+      n.fy = undefined;
+    }
+  }
+}
+
+function persistNodePosition(node: GraphNode, store: Map<string, PersistedNodePos>) {
+  if (node.isVirtual || node.x == null || node.y == null) return;
+  store.set(node.id, {
+    x: node.x,
+    y: node.y,
+    fx: node.fx,
+    fy: node.fy,
+  });
+}
+
 function getNodeBoxMetrics(node: GraphNode, globalScale: number) {
   const isCollector = node.type === "collector";
   const label = node.name;
@@ -441,6 +499,8 @@ function getNodeBoxMetrics(node: GraphNode, globalScale: number) {
 
 export default function Topology() {
   const graphRef = useRef<any>(undefined);
+  const nodePositionsRef = useRef<Map<string, PersistedNodePos>>(new Map());
+  const lastZoomLayoutKeyRef = useRef<number | null>(null);
   const { data: topologyData, isLoading } = useQuery({
     queryKey: ["/api/topology/force-graph"],
     queryFn: async (): Promise<TopologyResponse> => {
@@ -456,6 +516,7 @@ export default function Topology() {
     width: Math.max(window.innerWidth - 80, 800),
     height: Math.max(window.innerHeight - 240, 620),
   });
+  const [layoutResetKey, setLayoutResetKey] = useState(0);
 
   useEffect(() => {
     const onResize = () =>
@@ -468,8 +529,10 @@ export default function Topology() {
   }, []);
 
   const visualGraph = useMemo(() => {
-    return buildHierarchicalGraph(topologyData, viewport);
-  }, [topologyData, viewport.height, viewport.width]);
+    const built = buildHierarchicalGraph(topologyData, viewport);
+    mergePersistedPositions(built.nodes, nodePositionsRef.current);
+    return built;
+  }, [topologyData, viewport.height, viewport.width, layoutResetKey]);
   const graphData = useMemo(() => {
     return { nodes: visualGraph.nodes, links: visualGraph.links };
   }, [visualGraph.links, visualGraph.nodes]);
@@ -482,7 +545,7 @@ export default function Topology() {
     if (!graph) return;
     const chargeForce = graph.d3Force("charge");
     if (chargeForce?.strength) {
-      chargeForce.strength(-900);
+      chargeForce.strength(-520);
     }
     const linkForce = graph.d3Force("link");
     if (linkForce?.distance) {
@@ -491,13 +554,21 @@ export default function Topology() {
       );
     }
     if (linkForce?.strength) {
-      linkForce.strength((link: GraphLink) => (link.protocol === "telemetry" ? 0.25 : 0.9));
+      linkForce.strength((link: GraphLink) => (link.protocol === "telemetry" ? 0.22 : 0.55));
     }
     graph.d3ReheatSimulation();
-    window.setTimeout(() => {
+  }, [graphData]);
+
+  useEffect(() => {
+    const graph = graphRef.current;
+    if (!graph || graphData.nodes.length === 0) return;
+    if (lastZoomLayoutKeyRef.current === layoutResetKey) return;
+    lastZoomLayoutKeyRef.current = layoutResetKey;
+    const t = window.setTimeout(() => {
       graph.zoomToFit(700, 80);
     }, 900);
-  }, [graphData]);
+    return () => window.clearTimeout(t);
+  }, [graphData, layoutResetKey]);
 
   if (isLoading) {
     return (
@@ -514,16 +585,28 @@ export default function Topology() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight font-mono">Topology Map</h1>
           <p className="text-muted-foreground text-sm">
-            Arvore operacional com raiz no gateway, ramificacao por adjacencias e concentradores.
+            Árvore inicial com raiz no gateway; arraste os nós livremente. Partículas nos links
+            indicam sentido e intensidade do fluxo.
           </p>
           <p className="text-muted-foreground text-xs mt-1">
-            Arraste os dispositivos para reorganizar o desenho. Clique direito no no para soltar a fixacao manual.
+            Durante o arrasto o nó fixa-se à posição; clique direito num nó para o libertar e voltar
+            à simulação. Use «Repor layout» para recolocar a árvore.
           </p>
           <p className="text-muted-foreground text-xs">
             Gateway raiz: <span className="font-mono text-foreground">{visualGraph.rootGateway?.name ?? "indefinido"}</span>
           </p>
         </div>
-        <div className="flex flex-wrap gap-4 text-xs">
+        <div className="flex flex-wrap items-center gap-3 text-xs">
+          <button
+            type="button"
+            className="rounded-md border border-border bg-secondary/60 px-3 py-1.5 font-medium text-foreground hover:bg-secondary"
+            onClick={() => {
+              nodePositionsRef.current.clear();
+              setLayoutResetKey((k) => k + 1);
+            }}
+          >
+            Repor layout
+          </button>
           <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-success"></span><span>Online</span></div>
           <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-warning"></span><span>Warning</span></div>
           <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-destructive"></span><span>Offline</span></div>
@@ -557,41 +640,50 @@ export default function Topology() {
       <Card className="flex-1 glass-panel border-border/50 overflow-hidden relative bg-[#08111f]">
         <CardContent className="p-0 h-full">
           <ForceGraph2D
+            key={`topo-fg-${layoutResetKey}`}
             ref={graphRef}
             width={viewport.width}
             height={viewport.height}
             graphData={graphData}
             backgroundColor="#08111f"
             nodeRelSize={6}
-            cooldownTicks={30}
-            d3AlphaDecay={0.02}
-            d3VelocityDecay={0.35}
+            cooldownTicks={120}
+            d3AlphaDecay={0.022}
+            d3VelocityDecay={0.28}
             enableNodeDrag
+            onNodeDrag={(node) => {
+              const item = node as GraphNode;
+              if (item.isVirtual) return;
+              item.fx = item.x;
+              item.fy = item.y;
+              persistNodePosition(item, nodePositionsRef.current);
+            }}
             onNodeDragEnd={(node) => {
               const item = node as GraphNode;
               if (item.isVirtual) return;
               item.fx = item.x;
               item.fy = item.y;
+              persistNodePosition(item, nodePositionsRef.current);
             }}
-            onNodeClick={(node) => {
+            onNodeRightClick={(node, event) => {
+              event?.preventDefault?.();
               const item = node as GraphNode;
               if (item.isVirtual) return;
-              item.fx = item.x;
-              item.fy = item.y;
-            }}
-            onNodeRightClick={(node) => {
-              const item = node as GraphNode;
-              if (item.isVirtual) return;
+              nodePositionsRef.current.delete(item.id);
               item.fx = undefined;
               item.fy = undefined;
               graphRef.current?.d3ReheatSimulation();
             }}
             linkWidth={(link) => (link as GraphLink).strokeWidth}
             linkColor={(link) => (link as GraphLink).strokeColor}
-            linkDirectionalParticles={(link) => Math.max(0, (link as GraphLink).animationLevel)}
-            linkDirectionalParticleWidth={(link) => 2 + (link as GraphLink).animationLevel}
+            linkDirectionalParticles={(link) => linkParticleCount(link as GraphLink)}
+            linkDirectionalParticleWidth={(link) =>
+              2.2 + Math.min(4, (link as GraphLink).animationLevel * 1.1)
+            }
             linkDirectionalParticleColor={(link) => trafficParticleColor((link as GraphLink).trafficState)}
-            linkDirectionalParticleSpeed={(link) => 0.0025 * Math.max(1, (link as GraphLink).animationLevel)}
+            linkDirectionalParticleSpeed={(link) => linkParticleSpeed(link as GraphLink)}
+            linkDirectionalArrowLength={4}
+            linkDirectionalArrowRelPos={1}
             linkCurvature={(link) => ((link as GraphLink).protocol === "telemetry" ? 0.1 : 0.02)}
             nodeLabel={(node) => buildNodeLabel(node as GraphNode)}
             linkLabel={(link) => buildLinkLabel(link as GraphLink)}

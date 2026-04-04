@@ -4,14 +4,8 @@
  * Uso: node ./scripts/auth-test-login-http.cjs [baseUrl]
  *   baseUrl omisso: http://127.0.0.1:${API_PORT||8080}
  */
-const path = require("node:path");
-
-const root = path.resolve(__dirname, "..");
-try {
-  process.loadEnvFile(path.join(root, ".env"));
-} catch {
-  /* no .env */
-}
+const { applyRootEnv } = require("./apply-root-env.cjs");
+applyRootEnv();
 
 const port = process.env.API_PORT || "8080";
 const defaultBase = `http://127.0.0.1:${port}`;

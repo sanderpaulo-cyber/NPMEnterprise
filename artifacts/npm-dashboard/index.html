@@ -8,6 +8,19 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+      (function () {
+        try {
+          var raw = localStorage.getItem("npm-enterprise.dashboard.settings.v1");
+          if (!raw) return;
+          var o = JSON.parse(raw);
+          var t = o && o.interface && o.interface.theme;
+          if (t === "system" || t === "light" || t === "dark") {
+            document.documentElement.setAttribute("data-theme-choice", t);
+          }
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

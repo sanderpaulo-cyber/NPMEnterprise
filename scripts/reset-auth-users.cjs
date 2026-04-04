@@ -13,7 +13,6 @@
  * Requer: DATABASE_URL, tabela auth_users (npm run db:push).
  */
 const { randomBytes, scryptSync } = require("node:crypto");
-const path = require("node:path");
 const { Pool } = require("pg");
 
 const SCRYPT_PARAMS = {
@@ -47,12 +46,8 @@ function validatePasswordStrength(p) {
   return null;
 }
 
-const root = path.resolve(__dirname, "..");
-try {
-  process.loadEnvFile(path.join(root, ".env"));
-} catch {
-  /* sem .env */
-}
+const { applyRootEnv } = require("./apply-root-env.cjs");
+applyRootEnv();
 
 async function main() {
   const dbUrl = process.env.DATABASE_URL;

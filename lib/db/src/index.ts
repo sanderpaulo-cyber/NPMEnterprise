@@ -1,17 +1,14 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
-import path from "path";
-import { fileURLToPath } from "url";
+import { applyRootEnvOverride } from "./apply-root-env-override";
+import { resolveMonorepoEnvPath } from "./resolve-monorepo-env-path";
 import * as schema from "./schema";
 
 const { Pool } = pg;
 
-const currentDir = path.dirname(fileURLToPath(import.meta.url));
-
-try {
-  process.loadEnvFile(path.resolve(currentDir, "../../..", ".env"));
-} catch {
-  // Optional local env file.
+const envPath = resolveMonorepoEnvPath(import.meta.url);
+if (envPath) {
+  applyRootEnvOverride(envPath);
 }
 
 if (!process.env.DATABASE_URL) {
