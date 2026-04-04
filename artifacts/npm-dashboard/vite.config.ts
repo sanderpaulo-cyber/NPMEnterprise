@@ -14,6 +14,10 @@ try {
   // Optional local env file.
 }
 
+/** Alinhado com o servidor Vite: cookie Secure na API quando o dashboard é HTTPS. */
+const httpsEnabled =
+  process.env.WEB_HTTPS !== "0" && process.env.WEB_HTTPS !== "false";
+
 const apiProxy = {
   "/api": {
     target:
@@ -21,6 +25,13 @@ const apiProxy = {
       `http://127.0.0.1:${process.env.API_PORT ?? "8080"}`,
     changeOrigin: true,
     ws: true,
+    configure(proxy) {
+      if (httpsEnabled) {
+        proxy.on("proxyReq", (proxyReq) => {
+          proxyReq.setHeader("X-Forwarded-Proto", "https");
+        });
+      }
+    },
   },
 } as const;
 
@@ -28,9 +39,6 @@ const apiProxy = {
 const rawPort = process.env.WEB_PORT ?? process.env.PORT ?? "443";
 
 const port = Number(rawPort);
-
-const httpsEnabled =
-  process.env.WEB_HTTPS !== "0" && process.env.WEB_HTTPS !== "false";
 
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);

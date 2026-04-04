@@ -1,8 +1,10 @@
 import { isLdapConfigured } from "./config";
+import { logger } from "../logger";
 
 /**
  * Valida credenciais contra LDAP (bind simples com DN derivado do modelo).
  * Variáveis: AUTH_LDAP_URL, AUTH_LDAP_USER_DN_TEMPLATE (use {{username}}).
+ * Nunca lança: falhas de rede, URL inválida ou módulo em falta — o login **local** continua a funcionar.
  */
 export async function tryLdapBind(
   username: string,
@@ -30,7 +32,10 @@ export async function tryLdapBind(
       return null;
     }
   } catch (err) {
-    // ldapts em falta ou URL inválida
-    throw err;
+    logger.warn(
+      { err, username },
+      "LDAP indisponível ou mal configurado — contas locais não são afetadas; corrija AUTH_LDAP_* se precisar de LDAP.",
+    );
+    return null;
   }
 }
