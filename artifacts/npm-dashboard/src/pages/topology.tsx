@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { authFetch } from "@/lib/auth-fetch";
 import { Card, CardContent } from "@/components/ui/card";
 import ForceGraph2D from "react-force-graph-2d";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -443,7 +444,7 @@ export default function Topology() {
   const { data: topologyData, isLoading } = useQuery({
     queryKey: ["/api/topology/force-graph"],
     queryFn: async (): Promise<TopologyResponse> => {
-      const response = await fetch("/api/topology");
+      const response = await authFetch("/api/topology");
       if (!response.ok) {
         throw new Error(`Falha ao carregar topologia (${response.status})`);
       }

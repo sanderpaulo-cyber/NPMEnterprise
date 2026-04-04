@@ -17,6 +17,7 @@ const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 
 let _baseUrl: string | null = null;
 let _authTokenGetter: AuthTokenGetter | null = null;
+let _defaultCredentials: RequestCredentials | undefined;
 
 /**
  * Set a base URL that is prepended to every relative request URL
@@ -39,6 +40,13 @@ export function setBaseUrl(url: string | null): void {
  */
 export function setAuthTokenGetter(getter: AuthTokenGetter | null): void {
   _authTokenGetter = getter;
+}
+
+/**
+ * Define `credentials` por omissão em todos os `fetch` (ex.: `"include"` para cookies HttpOnly).
+ */
+export function setDefaultCredentials(mode: RequestCredentials | null): void {
+  _defaultCredentials = mode ?? undefined;
 }
 
 function isRequest(input: RequestInfo | URL): input is Request {
@@ -357,7 +365,10 @@ export async function customFetch<T = unknown>(
 
   const requestInfo = { method, url: resolveUrl(input) };
 
-  const response = await fetch(input, { ...init, method, headers });
+  const credentials =
+    init.credentials ?? _defaultCredentials;
+
+  const response = await fetch(input, { ...init, method, headers, credentials });
 
   if (!response.ok) {
     const errorData = await parseErrorBody(response, method);

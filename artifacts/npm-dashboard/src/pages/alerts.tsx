@@ -8,6 +8,7 @@ import { format } from "date-fns";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { useMemo, useState } from "react";
+import { authFetch } from "@/lib/auth-fetch";
 
 interface EnrichedAlert {
   id: string;
@@ -56,7 +57,7 @@ export default function Alerts() {
   const { data: alerts, isLoading } = useQuery({
     queryKey: ["/api/alerts/enriched", 500],
     queryFn: async (): Promise<AlertListResponse> => {
-      const response = await fetch("/api/alerts?limit=500");
+      const response = await authFetch("/api/alerts?limit=500");
       if (!response.ok) {
         throw new Error(`Falha ao carregar alertas (${response.status})`);
       }
@@ -129,7 +130,7 @@ export default function Alerts() {
 
   const handleAckGroup = async (ids: string[]) => {
     try {
-      const response = await fetch("/api/alerts/acknowledge", {
+      const response = await authFetch("/api/alerts/acknowledge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids }),

@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { useHealthCheck } from "@workspace/api-client-react";
 import { 
   Activity, 
   Server, 
@@ -18,17 +17,11 @@ import {
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { useWebSocket } from "@/hooks/use-websocket";
+import { useAuth } from "@/context/auth-context";
+import { LogOut } from "lucide-react";
 import { ApiStatusBanner } from "@/components/api-status-banner";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
@@ -42,14 +35,18 @@ const navItems = [
   { href: "/flows", label: "Traffic Flows", icon: Wifi },
   { href: "/alerts", label: "Active Alerts", icon: AlertTriangle },
   { href: "/poller", label: "Poller Engine", icon: Zap },
+  { href: "/settings", label: "Configurações", icon: Settings },
 ];
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location, setLocation] = useLocation();
-  const { isConnected } = useWebSocket();
-  const { data: health } = useHealthCheck();
+  const { authRequired, accessToken, logout, username } = useAuth();
+  const { isConnected } = useWebSocket({
+    authRequired,
+    token: accessToken,
+    preferCookieAuth: true,
+  });
   const [topSearch, setTopSearch] = useState("");
-  const [settingsOpen, setSettingsOpen] = useState(false);
 
   function handleGlobalSearch(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -136,11 +133,29 @@ export function Layout({ children }: { children: React.ReactNode }) {
               <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-destructive border border-background"></span>
             </button>
             <button
+              type="button"
               className="p-2 text-muted-foreground hover:text-foreground transition-colors rounded-full hover:bg-secondary"
-              onClick={() => setSettingsOpen(true)}
+              onClick={() => setLocation("/settings")}
+              title="Configurações"
             >
               <Settings className="h-5 w-5" />
             </button>
+            {authRequired && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground gap-1"
+                onClick={async () => {
+                  await logout();
+                  setLocation("/login");
+                }}
+                title="Terminar sessão"
+              >
+                <LogOut className="h-4 w-4" />
+                <span className="hidden sm:inline max-w-[100px] truncate">{username}</span>
+              </Button>
+            )}
             <div className="h-8 w-8 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center text-primary ml-2">
               <User className="h-4 w-4" />
             </div>
@@ -158,45 +173,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       </main>
-
-      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Configurações</DialogTitle>
-            <DialogDescription>
-              Estado do ambiente local e atalhos operacionais do dashboard.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 text-sm">
-            <div className="rounded-lg border border-border bg-secondary/20 p-4">
-              <p className="font-medium">Sincronização em tempo real</p>
-              <p className="text-muted-foreground">
-                WebSocket: {isConnected ? "conectado" : "desconectado"}
-              </p>
-              <p className="text-muted-foreground">
-                API: {health?.status === "ok" ? "saudável" : "sem resposta"}
-              </p>
-            </div>
-            <div className="rounded-lg border border-border bg-secondary/20 p-4">
-              <p className="font-medium">URLs esperadas</p>
-              <p className="text-muted-foreground">
-                Dashboard: <code className="font-mono">{window.location.origin}</code>
-              </p>
-              <p className="text-muted-foreground">
-                API: <code className="font-mono">{import.meta.env.VITE_API_BASE_URL ?? "via proxy /api"}</code>
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" className="border-border" onClick={() => setLocation("/nodes")}>
-                Ir para inventário
-              </Button>
-              <Button variant="outline" className="border-border" onClick={() => setLocation("/poller")}>
-                Ir para poller
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

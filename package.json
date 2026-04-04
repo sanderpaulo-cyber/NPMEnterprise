@@ -14,12 +14,18 @@
     "db:restore": "node ./scripts/db-restore.cjs",
     "docker:up": "docker compose up --build",
     "docker:down": "docker compose down",
+    "docker:postgres": "docker compose up -d postgres",
+    "cert:localhost": "node ./scripts/generate-localhost-https-cert.cjs",
+    "ports:check": "node ./scripts/check-ports.cjs",
+    "auth:create-user": "node ./scripts/auth-create-user.cjs",
+    "auth:reset": "node ./scripts/reset-auth-users.cjs",
     "build": "corepack pnpm run typecheck && corepack pnpm -r --if-present run build",
     "typecheck:libs": "tsc --build",
     "typecheck": "corepack pnpm run typecheck:libs && corepack pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
   },
   "private": true,
   "devDependencies": {
+    "pg": "^8.20.0",
     "typescript": "~5.9.2",
     "prettier": "^3.8.1"
   }

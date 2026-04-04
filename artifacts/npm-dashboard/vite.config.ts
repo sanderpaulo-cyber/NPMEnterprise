@@ -1,11 +1,15 @@
+import fs from "node:fs";
+import path from "node:path";
 import { defineConfig } from "vite";
+import basicSsl from "@vitejs/plugin-basic-ssl";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import path from "path";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 
+const repoRoot = path.resolve(import.meta.dirname, "..", "..");
+
 try {
-  process.loadEnvFile(path.resolve(import.meta.dirname, "..", "..", ".env"));
+  process.loadEnvFile(path.join(repoRoot, ".env"));
 } catch {
   // Optional local env file.
 }
@@ -20,9 +24,13 @@ const apiProxy = {
   },
 } as const;
 
-const rawPort = process.env.WEB_PORT ?? process.env.PORT ?? "20112";
+/** 443: no Windows costuma exigir terminal como Administrador. */
+const rawPort = process.env.WEB_PORT ?? process.env.PORT ?? "443";
 
 const port = Number(rawPort);
+
+const httpsEnabled =
+  process.env.WEB_HTTPS !== "0" && process.env.WEB_HTTPS !== "false";
 
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
@@ -30,9 +38,35 @@ if (Number.isNaN(port) || port <= 0) {
 
 const basePath = process.env.BASE_PATH ?? "/";
 
+function resolveSslPath(p: string): string {
+  return path.isAbsolute(p) ? p : path.join(repoRoot, p);
+}
+
+function loadCustomHttpsCerts():
+  | { key: Buffer; cert: Buffer }
+  | undefined {
+  const keyEnv = process.env.WEB_SSL_KEY?.trim();
+  const certEnv = process.env.WEB_SSL_CERT?.trim();
+  if (!keyEnv || !certEnv) return undefined;
+  const keyPath = resolveSslPath(keyEnv);
+  const certPath = resolveSslPath(certEnv);
+  if (!fs.existsSync(keyPath) || !fs.existsSync(certPath)) {
+    return undefined;
+  }
+  return {
+    key: fs.readFileSync(keyPath),
+    cert: fs.readFileSync(certPath),
+  };
+}
+
+const customHttps = httpsEnabled ? loadCustomHttpsCerts() : undefined;
+/** Cert gerado em memoria pelo plugin; use WEB_SSL_KEY/WEB_SSL_CERT para PEM persistentes (ex. pnpm cert:localhost). */
+const useBasicSslPlugin = Boolean(httpsEnabled && !customHttps);
+
 export default defineConfig({
   base: basePath,
   plugins: [
+    ...(useBasicSslPlugin ? [basicSsl()] : []),
     react(),
     tailwindcss(),
     ...(process.env.NODE_ENV !== "production" &&
@@ -66,6 +100,7 @@ export default defineConfig({
     port,
     host: "0.0.0.0",
     allowedHosts: true,
+    ...(customHttps ? { https: customHttps } : {}),
     fs: {
       strict: true,
       deny: ["**/.*"],
@@ -76,6 +111,7 @@ export default defineConfig({
     port,
     host: "0.0.0.0",
     allowedHosts: true,
+    ...(customHttps ? { https: customHttps } : {}),
     proxy: { ...apiProxy },
   },
 });

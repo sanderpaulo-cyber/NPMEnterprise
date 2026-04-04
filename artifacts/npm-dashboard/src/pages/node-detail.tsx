@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { listCredentials, type SnmpCredential } from "@/lib/discovery-api";
+import { authFetch } from "@/lib/auth-fetch";
 
 interface NodeInterface {
   id: string;
@@ -479,7 +480,7 @@ export default function NodeDetail() {
     enabled: Boolean(id),
     refetchInterval: 15000,
     queryFn: async (): Promise<NodeDetails> => {
-      const response = await fetch(`/api/nodes/${id}`);
+      const response = await authFetch(`/api/nodes/${id}`);
       if (!response.ok) {
         throw new Error(`Falha ao carregar dispositivo (${response.status})`);
       }
@@ -493,7 +494,7 @@ export default function NodeDetail() {
     enabled: Boolean(id),
     refetchInterval: 15000,
     queryFn: async (): Promise<MetricSeriesResponse> => {
-      const response = await fetch(`/api/metrics/${id}?metric=cpu_temperature&bucket=5m`);
+      const response = await authFetch(`/api/metrics/${id}?metric=cpu_temperature&bucket=5m`);
       if (!response.ok) {
         throw new Error(`Falha ao carregar temperatura (${response.status})`);
       }
@@ -505,7 +506,7 @@ export default function NodeDetail() {
     enabled: Boolean(id),
     refetchInterval: 15000,
     queryFn: async (): Promise<EnvironmentResponse> => {
-      const response = await fetch(`/api/nodes/${id}/environment`);
+      const response = await authFetch(`/api/nodes/${id}/environment`);
       if (!response.ok) {
         throw new Error(`Falha ao carregar sensores (${response.status})`);
       }
@@ -517,7 +518,7 @@ export default function NodeDetail() {
     enabled: Boolean(id),
     refetchInterval: 15000,
     queryFn: async (): Promise<HardwareInventoryResponse> => {
-      const response = await fetch(`/api/nodes/${id}/hardware`);
+      const response = await authFetch(`/api/nodes/${id}/hardware`);
       if (!response.ok) {
         throw new Error(`Falha ao carregar hardware (${response.status})`);
       }
@@ -529,7 +530,7 @@ export default function NodeDetail() {
     enabled: Boolean(id),
     refetchInterval: 30000,
     queryFn: async (): Promise<SnmpDiagnosticsResponse> => {
-      const response = await fetch(`/api/nodes/${id}/snmp-diagnostics`);
+      const response = await authFetch(`/api/nodes/${id}/snmp-diagnostics`);
       if (!response.ok) {
         throw new Error(`Falha ao carregar diagnostico SNMP (${response.status})`);
       }
@@ -544,7 +545,7 @@ export default function NodeDetail() {
   const { data: managedNodesData } = useQuery({
     queryKey: ["/api/nodes", "l3-neighbors"],
     queryFn: async (): Promise<ManagedNodesResponse> => {
-      const response = await fetch("/api/nodes?limit=500");
+      const response = await authFetch("/api/nodes?limit=500");
       if (!response.ok) {
         throw new Error(`Falha ao carregar inventario de nos (${response.status})`);
       }
@@ -557,7 +558,7 @@ export default function NodeDetail() {
     enabled: Boolean(id),
     refetchInterval: 15000,
     queryFn: async (): Promise<InterfaceAddressesResponse> => {
-      const response = await fetch(`/api/nodes/${id}/interface-addresses`);
+      const response = await authFetch(`/api/nodes/${id}/interface-addresses`);
       if (!response.ok) {
         throw new Error(`Falha ao carregar enderecos IP (${response.status})`);
       }
@@ -569,7 +570,7 @@ export default function NodeDetail() {
     enabled: Boolean(id),
     refetchInterval: 15000,
     queryFn: async (): Promise<RoutesResponse> => {
-      const response = await fetch(`/api/nodes/${id}/routes`);
+      const response = await authFetch(`/api/nodes/${id}/routes`);
       if (!response.ok) {
         throw new Error(`Falha ao carregar rotas (${response.status})`);
       }
@@ -581,7 +582,7 @@ export default function NodeDetail() {
     enabled: Boolean(id),
     refetchInterval: 15000,
     queryFn: async (): Promise<{ nodeId: string; interfaces: NodeInterface[] }> => {
-      const response = await fetch(`/api/nodes/${id}/interfaces`);
+      const response = await authFetch(`/api/nodes/${id}/interfaces`);
       if (!response.ok) {
         throw new Error(`Falha ao carregar interfaces (${response.status})`);
       }
@@ -593,7 +594,7 @@ export default function NodeDetail() {
     enabled: Boolean(id),
     refetchInterval: 15000,
     queryFn: async (): Promise<{ nodeId: string; entries: NodeArpEntry[] }> => {
-      const response = await fetch(`/api/nodes/${id}/arp`);
+      const response = await authFetch(`/api/nodes/${id}/arp`);
       if (!response.ok) {
         throw new Error(`Falha ao carregar ARP (${response.status})`);
       }
@@ -605,7 +606,7 @@ export default function NodeDetail() {
     enabled: Boolean(id),
     refetchInterval: 15000,
     queryFn: async (): Promise<{ nodeId: string; entries: NodeMacEntry[] }> => {
-      const response = await fetch(`/api/nodes/${id}/mac-table`);
+      const response = await authFetch(`/api/nodes/${id}/mac-table`);
       if (!response.ok) {
         throw new Error(`Falha ao carregar MAC table (${response.status})`);
       }
@@ -617,7 +618,7 @@ export default function NodeDetail() {
     enabled: Boolean(id),
     refetchInterval: 15000,
     queryFn: async (): Promise<{ nodeId: string; entries: NodeVlanEntry[] }> => {
-      const response = await fetch(`/api/nodes/${id}/vlans`);
+      const response = await authFetch(`/api/nodes/${id}/vlans`);
       if (!response.ok) {
         throw new Error(`Falha ao carregar VLANs (${response.status})`);
       }
@@ -629,7 +630,7 @@ export default function NodeDetail() {
     enabled: Boolean(id),
     refetchInterval: 15000,
     queryFn: async (): Promise<AccessPortView> => {
-      const response = await fetch(`/api/nodes/${id}/access-ports`);
+      const response = await authFetch(`/api/nodes/${id}/access-ports`);
       if (!response.ok) {
         throw new Error(`Falha ao correlacionar portas (${response.status})`);
       }
@@ -641,7 +642,7 @@ export default function NodeDetail() {
     enabled: Boolean(id),
     refetchInterval: 15000,
     queryFn: async (): Promise<{ nodeId: string; profiles: NodePortProfile[] }> => {
-      const response = await fetch(`/api/nodes/${id}/access-baseline`);
+      const response = await authFetch(`/api/nodes/${id}/access-baseline`);
       if (!response.ok) {
         throw new Error(`Falha ao carregar baseline L2 (${response.status})`);
       }
@@ -653,7 +654,7 @@ export default function NodeDetail() {
     enabled: Boolean(id),
     refetchInterval: 15000,
     queryFn: async (): Promise<{ nodeId: string; history: NodePortObservation[] }> => {
-      const response = await fetch(`/api/nodes/${id}/access-history`);
+      const response = await authFetch(`/api/nodes/${id}/access-history`);
       if (!response.ok) {
         throw new Error(`Falha ao carregar historico L2 (${response.status})`);
       }
@@ -692,7 +693,7 @@ export default function NodeDetail() {
   async function handleSavePollingProfile() {
     try {
       setSavingPollingProfile(true);
-      const response = await fetch(`/api/nodes/${id}/polling-profile`, {
+      const response = await authFetch(`/api/nodes/${id}/polling-profile`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
@@ -737,7 +738,7 @@ export default function NodeDetail() {
               snmpCommunity: inlineCommunity.trim(),
             };
 
-      const response = await fetch(`/api/nodes/${id}/snmp/test`, {
+      const response = await authFetch(`/api/nodes/${id}/snmp/test`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -783,7 +784,7 @@ export default function NodeDetail() {
               snmpCommunity: inlineCommunity.trim(),
             };
 
-      const response = await fetch(`/api/nodes/${id}/snmp`, {
+      const response = await authFetch(`/api/nodes/${id}/snmp`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",

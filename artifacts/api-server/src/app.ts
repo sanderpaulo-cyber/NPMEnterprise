@@ -1,10 +1,16 @@
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
+import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
 
 const app: Express = express();
+
+const trustProxy = Number.parseInt(process.env.TRUST_PROXY ?? "1", 10);
+if (!Number.isNaN(trustProxy) && trustProxy >= 0) {
+  app.set("trust proxy", trustProxy);
+}
 
 app.use(
   pinoHttp({
@@ -25,9 +31,15 @@ app.use(
     },
   }),
 );
-app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(
+  cors({
+    origin: true,
+    credentials: true,
+  }),
+);
+app.use(cookieParser());
+app.use(express.json({ limit: "256kb" }));
+app.use(express.urlencoded({ extended: true, limit: "256kb" }));
 
 app.use("/api", router);
 

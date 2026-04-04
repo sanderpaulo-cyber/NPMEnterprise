@@ -1,3 +1,5 @@
+import { authFetch } from "@/lib/auth-fetch";
+
 export interface NetworkScope {
   id: string;
   name: string;
@@ -57,8 +59,8 @@ export interface DiscoveryRun {
   createdAt: string;
 }
 
-async function apiFetch<T>(input: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(input, {
+async function discoveryRequest<T>(input: string, init?: RequestInit): Promise<T> {
+  const response = await authFetch(input, {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -79,7 +81,7 @@ async function apiFetch<T>(input: string, init?: RequestInit): Promise<T> {
 }
 
 export function listScopes() {
-  return apiFetch<{ scopes: NetworkScope[] }>("/api/discovery/scopes");
+  return discoveryRequest<{ scopes: NetworkScope[] }>("/api/discovery/scopes");
 }
 
 export function createScope(payload: {
@@ -95,20 +97,20 @@ export function createScope(payload: {
   priority?: number;
   defaultCredentialId?: string | null;
 }) {
-  return apiFetch<NetworkScope>("/api/discovery/scopes", {
+  return discoveryRequest<NetworkScope>("/api/discovery/scopes", {
     method: "POST",
     body: JSON.stringify(payload),
   });
 }
 
 export function deleteScope(scopeId: string) {
-  return apiFetch<void>(`/api/discovery/scopes/${scopeId}`, {
+  return discoveryRequest<void>(`/api/discovery/scopes/${scopeId}`, {
     method: "DELETE",
   });
 }
 
 export function listCredentials() {
-  return apiFetch<{ credentials: SnmpCredential[] }>("/api/discovery/credentials");
+  return discoveryRequest<{ credentials: SnmpCredential[] }>("/api/discovery/credentials");
 }
 
 export function createCredential(payload: {
@@ -125,20 +127,20 @@ export function createCredential(payload: {
   retries?: number;
   enabled?: boolean;
 }) {
-  return apiFetch<SnmpCredential>("/api/discovery/credentials", {
+  return discoveryRequest<SnmpCredential>("/api/discovery/credentials", {
     method: "POST",
     body: JSON.stringify(payload),
   });
 }
 
 export function deleteCredential(credentialId: string) {
-  return apiFetch<void>(`/api/discovery/credentials/${credentialId}`, {
+  return discoveryRequest<void>(`/api/discovery/credentials/${credentialId}`, {
     method: "DELETE",
   });
 }
 
 export function listRuns() {
-  return apiFetch<{ runs: DiscoveryRun[]; running: number }>("/api/discovery/runs");
+  return discoveryRequest<{ runs: DiscoveryRun[]; running: number }>("/api/discovery/runs");
 }
 
 export function queueDiscoveryRuns(payload: {
@@ -150,7 +152,7 @@ export function queueDiscoveryRuns(payload: {
   primaryRouterName?: string | null;
   credentialId?: string | null;
 }) {
-  return apiFetch<{ queued: number; runs: DiscoveryRun[] }>("/api/discovery/runs", {
+  return discoveryRequest<{ queued: number; runs: DiscoveryRun[] }>("/api/discovery/runs", {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -163,7 +165,7 @@ export function clearDiscovery(payload: {
   rangeEndIp?: string | null;
   removeNodes?: boolean;
 }) {
-  return apiFetch<{
+  return discoveryRequest<{
     removedRuns: number;
     removedNodes: number;
     target: string;

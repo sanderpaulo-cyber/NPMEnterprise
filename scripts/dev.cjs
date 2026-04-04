@@ -1,11 +1,119 @@
 /* eslint-disable no-console */
 const { execFileSync, spawn } = require("child_process");
+const fs = require("node:fs");
+const path = require("node:path");
+
+/**
+ * Aplica chaves do .env da raiz sobre process.env (substitui existentes).
+ * O `process.loadEnvFile` do Node não sobrescreve variáveis já definidas; no Windows
+ * um DATABASE_URL global fazia a API ligar a outra base que `auth:reset` / Drizzle.
+ */
+function applyRootEnvFile() {
+  const envPath = path.join(__dirname, "..", ".env");
+  let raw;
+  try {
+    raw = fs.readFileSync(envPath, "utf8");
+  } catch {
+    return;
+  }
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq === -1) continue;
+    const key = trimmed.slice(0, eq).trim();
+    if (!key) continue;
+    let val = trimmed.slice(eq + 1).trim();
+    if (
+      (val.startsWith('"') && val.endsWith('"')) ||
+      (val.startsWith("'") && val.endsWith("'"))
+    ) {
+      val = val.slice(1, -1);
+    }
+    process.env[key] = val;
+  }
+}
+
+applyRootEnvFile();
 
 const API_PORT = Number(process.env.API_PORT || 8080);
-const WEB_PORT = Number(process.env.WEB_PORT || 20112);
+const WEB_PORT = Number(process.env.WEB_PORT || 443);
 const isWindows = process.platform === "win32";
-const corepackBin = "corepack";
 const childProcesses = [];
+
+function canExec(file, argv) {
+  try {
+    execFileSync(file, argv, { stdio: "ignore", windowsHide: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** No Windows, corepack e invocado como corepack.cmd via cmd; execFileSync("corepack") falha. */
+function canRunCorepackPnpm() {
+  if (isWindows) {
+    try {
+      execFileSync("cmd.exe", ["/d", "/s", "/c", "corepack pnpm --version"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return canExec("corepack", ["pnpm", "--version"]);
+}
+
+function canRunPnpmCli() {
+  if (isWindows) {
+    try {
+      execFileSync("cmd.exe", ["/d", "/s", "/c", "pnpm --version"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return canExec("pnpm", ["--version"]);
+}
+
+/**
+ * Muitos PCs Windows nao tem `pnpm` no PATH; Node traz `corepack pnpm`.
+ * Ordem: corepack pnpm -> pnpm -> npx --yes pnpm
+ */
+function getPnpmSpawnConfig(pnpmArgs) {
+  const tail = pnpmArgs.join(" ");
+  if (canRunCorepackPnpm()) {
+    if (isWindows) {
+      return {
+        command: "cmd.exe",
+        args: ["/d", "/s", "/c", `corepack pnpm ${tail}`],
+      };
+    }
+    return { command: "corepack", args: ["pnpm", ...pnpmArgs] };
+  }
+  if (canRunPnpmCli()) {
+    if (isWindows) {
+      return { command: "cmd.exe", args: ["/d", "/s", "/c", `pnpm ${tail}`] };
+    }
+    return { command: "pnpm", args: pnpmArgs };
+  }
+  console.warn(
+    "[dev] Nem corepack nem pnpm encontrados no PATH; a usar npx pnpm (mais lento na primeira vez).\n" +
+      "  Sugestao:  corepack enable   e reinicie o terminal, ou instale pnpm globalmente.\n",
+  );
+  if (isWindows) {
+    return {
+      command: "cmd.exe",
+      args: ["/d", "/s", "/c", `npx --yes pnpm ${tail}`],
+    };
+  }
+  return { command: "npx", args: ["--yes", "pnpm", ...pnpmArgs] };
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -65,28 +173,65 @@ async function freePorts() {
   await sleep(500);
 }
 
-function startProcess(name, args) {
+function processNameWindows(pid) {
+  try {
+    const n = execFileSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-Command",
+        `(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).Name`,
+      ],
+      { encoding: "utf8" },
+    ).trim();
+    return n || "?";
+  } catch {
+    return "?";
+  }
+}
+
+function formatPortLine(port) {
+  const pids = getListeningPids(port);
+  if (pids.length === 0) {
+    return `${port}: livre`;
+  }
+  return pids
+    .map((pid) => `${port}: em uso — PID ${pid} (${processNameWindows(pid)})`)
+    .join("; ");
+}
+
+function logPortStatus(title) {
+  if (!isWindows) {
+    console.log(`[dev] ${title} (API ${API_PORT}, WEB ${WEB_PORT}) — use netstat/lsof se necessario`);
+    return;
+  }
+  console.log(`[dev] ${title}`);
+  console.log(`[dev]   ${formatPortLine(API_PORT)}`);
+  console.log(`[dev]   ${formatPortLine(WEB_PORT)}`);
+}
+
+function startProcess(name, pnpmArgs) {
   console.log(`[dev] iniciando ${name}...`);
-  const child = isWindows
-    ? spawn(
-        "cmd.exe",
-        ["/d", "/s", "/c", `${corepackBin} ${args.join(" ")}`],
-        {
-          cwd: process.cwd(),
-          env: process.env,
-          stdio: "inherit",
-        },
-      )
-    : spawn(corepackBin, args, {
-        cwd: process.cwd(),
-        env: process.env,
-        stdio: "inherit",
-      });
+  const { command, args } = getPnpmSpawnConfig(pnpmArgs);
+  const child = spawn(command, args, {
+    cwd: process.cwd(),
+    env: process.env,
+    stdio: "inherit",
+  });
 
   childProcesses.push(child);
   child.on("exit", (code, signal) => {
     const reason = signal ? `signal ${signal}` : `codigo ${code ?? 0}`;
     console.log(`[dev] ${name} finalizado (${reason})`);
+    if (name === "API" && code && code !== 0) {
+      console.error(
+        "\n[dev] A API saiu com erro — o dashboard tambem sera encerrado.\n" +
+          "  Causa mais comum: PostgreSQL inacessivel (DATABASE_URL no .env).\n" +
+          "  Suba o Postgres:  npm run docker:postgres   (ou pnpm docker:postgres)\n" +
+          "  Schema:           npm run db:push\n" +
+          "  So o front:       npm run dev:web\n",
+      );
+    }
     shutdown(code ?? 0);
   });
 }
@@ -113,9 +258,16 @@ process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));
 
 async function main() {
+  if (isWindows && WEB_PORT < 1024) {
+    console.warn(
+      "[dev] Porta privilegiada (<1024). No Windows, execute o terminal como Administrador ou use WEB_PORT>=1024.\n",
+    );
+  }
+  logPortStatus("Estado das portas (antes de libertar)");
   await freePorts();
-  startProcess("API", ["pnpm", "--filter", "@workspace/api-server", "run", "dev"]);
-  startProcess("Dashboard", ["pnpm", "--filter", "@workspace/npm-dashboard", "run", "dev"]);
+  logPortStatus("Estado das portas (depois de libertar)");
+  startProcess("API", ["--filter", "@workspace/api-server", "run", "dev"]);
+  startProcess("Dashboard", ["--filter", "@workspace/npm-dashboard", "run", "dev"]);
 }
 
 main().catch((error) => {

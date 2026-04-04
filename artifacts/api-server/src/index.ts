@@ -8,6 +8,8 @@ import { initializeDiscoveryEngine } from "./lib/discovery-engine";
 import { initWebSocket, broadcast } from "./lib/websocket";
 import { startPoller, stopPoller, setWsBroadcast } from "./lib/poller";
 import { seedDatabase } from "./lib/seed";
+import { isAuthEnabled, getJwtSecret } from "./lib/auth/config";
+import { ensureBootstrapAdmin } from "./lib/auth/bootstrap";
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -68,6 +70,30 @@ server.on("error", (err) => {
 
 async function bootstrap() {
   await pool.query("select 1");
+  const dbInfo = await pool.query<{ name: string; user: string }>(
+    "select current_database() as name, current_user as user",
+  );
+  logger.info(
+    {
+      database: dbInfo.rows[0]?.name,
+      dbUser: dbInfo.rows[0]?.user,
+    },
+    "PostgreSQL ligado",
+  );
+
+  if (isAuthEnabled()) {
+    getJwtSecret();
+    try {
+      await ensureBootstrapAdmin();
+    } catch (bootErr) {
+      logger.error(
+        { err: bootErr },
+        "ensureBootstrapAdmin falhou — confirme que correu db:push (tabela auth_users)",
+      );
+      throw bootErr;
+    }
+  }
+
   await initializeDiscoveryEngine();
 
   if (shouldSeedDemoData()) {
@@ -95,7 +121,30 @@ process.on("SIGTERM", () => {
   void shutdown("SIGTERM");
 });
 
+function bootstrapFailureHint(err: unknown): string | undefined {
+  const e = err as NodeJS.ErrnoException & { code?: string };
+  if (e?.code === "ECONNREFUSED") {
+    return (
+      "PostgreSQL inacessivel (ligacao recusada). Suba o servico e confirme DATABASE_URL no .env " +
+      "(ex.: pnpm docker:postgres na raiz do repositorio)."
+    );
+  }
+  const msg = e instanceof Error ? e.message : String(err);
+  if (msg.includes("password authentication failed")) {
+    return "PostgreSQL rejeitou as credenciais — corrija DATABASE_URL no .env.";
+  }
+  if (msg.includes("does not exist") && msg.toLowerCase().includes("database")) {
+    return "A base de dados indicada nao existe — crie-a ou ajuste DATABASE_URL; depois execute pnpm db:push.";
+  }
+  return undefined;
+}
+
 bootstrap().catch((err) => {
   logger.error({ err }, "API bootstrap failed");
+  const hint = bootstrapFailureHint(err);
+  if (hint) {
+    // eslint-disable-next-line no-console
+    console.error(`\n[api-server] ${hint}\n`);
+  }
   process.exit(1);
 });

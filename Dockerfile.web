@@ -10,6 +10,6 @@ COPY artifacts ./artifacts
 RUN corepack enable && corepack pnpm install --frozen-lockfile
 RUN corepack pnpm build
 
-EXPOSE 20112
+EXPOSE 443
 
 CMD ["sh", "-lc", "corepack pnpm start:web"]

@@ -1,20 +1,12 @@
-import { Switch, Route, Router as WouterRouter } from "wouter";
+import { Router as WouterRouter } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ThemeProvider } from "next-themes";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { Layout } from "@/components/layout";
-
-// Pages
-import Dashboard from "@/pages/dashboard";
-import Topology from "@/pages/topology";
-import Nodes from "@/pages/nodes";
-import NodeDetail from "@/pages/node-detail";
-import NetPath from "@/pages/netpath";
-import Flows from "@/pages/flows";
-import Alerts from "@/pages/alerts";
-import Poller from "@/pages/poller";
-import Discovery from "@/pages/discovery";
-import NotFound from "@/pages/not-found";
+import { DashboardSettingsProvider } from "@/context/dashboard-settings-context";
+import { AuthProvider } from "@/context/auth-context";
+import { AppRoutes } from "@/components/app-routes";
+import { loadDashboardLocalSettings } from "@/lib/dashboard-local-settings";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -26,34 +18,28 @@ const queryClient = new QueryClient({
   },
 });
 
-function Router() {
-  return (
-    <Layout>
-      <Switch>
-        <Route path="/" component={Dashboard} />
-        <Route path="/topology" component={Topology} />
-        <Route path="/nodes" component={Nodes} />
-        <Route path="/nodes/:id" component={NodeDetail} />
-        <Route path="/netpath" component={NetPath} />
-        <Route path="/flows" component={Flows} />
-        <Route path="/alerts" component={Alerts} />
-        <Route path="/poller" component={Poller} />
-        <Route path="/discovery" component={Discovery} />
-        <Route component={NotFound} />
-      </Switch>
-    </Layout>
-  );
-}
-
 function App() {
+  const defaultTheme = loadDashboardLocalSettings().interface.theme;
+
   return (
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-          <Router />
-        </WouterRouter>
-        <Toaster />
-      </TooltipProvider>
+      <ThemeProvider
+        attribute="class"
+        defaultTheme={defaultTheme}
+        enableSystem
+        disableTransitionOnChange
+      >
+        <DashboardSettingsProvider>
+          <TooltipProvider>
+            <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+              <AuthProvider>
+                <AppRoutes />
+              </AuthProvider>
+            </WouterRouter>
+            <Toaster />
+          </TooltipProvider>
+        </DashboardSettingsProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   );
 }
