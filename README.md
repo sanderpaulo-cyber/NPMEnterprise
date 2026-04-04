@@ -34,14 +34,16 @@ O projeto foi organizado como monorepo `pnpm workspace` e hoje cobre:
 ```mermaid
 flowchart LR
   User[Operador] --> Web[Dashboard React/Vite]
-  Web -->|HTTP /api| Api[API Express]
-  Web -->|WebSocket| Ws[/api/ws]
+  Web -->|HTTP /api autenticado| Api[API Express]
+  Web -->|WebSocket /api/ws| Ws[/api/ws]
   Api --> Db[(PostgreSQL)]
   Api --> Poller[Poller ICMP/SNMP]
   Poller --> Network[Dispositivos de rede]
   Poller --> Db
   Api --> Ws
 ```
+
+Com `AUTH_ENABLED=true`, o dashboard obtem sessao em `/login`; a API valida JWT/cookie nas rotas protegidas (ver `.env.example`).
 
 ### Estrutura do repositorio
 
@@ -65,7 +67,7 @@ flowchart LR
 Documentos auxiliares:
 
 - guia de contribuicao: `CONTRIBUTING.md`
-- roadmap tecnico: `docs/ROADMAP.md`
+- roadmap tecnico e lista de **entregas recentes** vs backlog: `docs/ROADMAP.md`
 
 ## Requisitos
 

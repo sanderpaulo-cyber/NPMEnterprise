@@ -43,6 +43,8 @@ corepack pnpm dev:api
 corepack pnpm dev:web
 ```
 
+Por defeito, `AUTH_ENABLED=false` no `.env.example`, para desenvolvimento sem login. Para testar o fluxo completo de autenticacao, siga a secao **Autenticacao do dashboard e da API** no `README.md` e reinicie a API.
+
 ## Estrategia de mudanca
 
 - prefira mudancas pequenas e focadas
@@ -62,9 +64,10 @@ corepack pnpm -r --filter "./lib/**" --filter "./artifacts/api-server" --filter 
 
 Se sua mudanca tocar runtime da API, tambem valide:
 
-- `GET /api/healthz`
+- `GET /api/healthz` e `GET /api/readyz`
 - bootstrap local com `dev:api`
 - dashboard com proxy `/api`
+- se alterar rotas protegidas ou auth: login em `/login`, cookie `ns_session` ou header `Authorization`, e rotas em `/api/auth/*` conforme `artifacts/api-server/src/routes/auth.ts`
 
 ## Convencao de commits
 
@@ -84,17 +87,21 @@ Exemplos:
 
 Tenha atencao extra em:
 
-- `lib/db`: altera schema e pode exigir `drizzle push`
+- `lib/db`: altera schema e pode exigir `drizzle push` (inclui `schema/auth.ts` e `schema/settings.ts`)
+- `artifacts/api-server/src/lib/auth/` e `src/middleware/auth-gateway.ts`: sessao, JWT e protecao de rotas
+- `artifacts/api-server/src/routes/auth.ts`, `settings.ts`, `users-admin.ts`: contratos publicos da API
+- `artifacts/npm-dashboard/src/context/auth-context.tsx` e paginas `login.tsx` / `settings.tsx`: fluxo de utilizador
 - `artifacts/api-server/src/lib/poller.ts`: afeta polling e carga operacional
 - `artifacts/api-server/src/lib/snmp-client.ts`: afeta compatibilidade com vendors
 - `artifacts/npm-dashboard/src/pages/topology.tsx`: impacto forte em UX e performance
 
 ## Seguranca
 
-- nao commite segredos
+- nao commite segredos (inclui `AUTH_JWT_SECRET` e passwords de bootstrap)
 - nao publique credenciais SNMP reais
 - prefira acessos de leitura
 - remova dados sensiveis de logs e exemplos
+- mudancas em auth ou em listagem de utilizadores: revisar rate limits e validacao de entrada em `artifacts/api-server/src/lib/auth/`
 
 ## Backlog tecnico
 

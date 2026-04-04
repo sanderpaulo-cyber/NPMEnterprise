@@ -2,6 +2,20 @@
 
 Este backlog organiza os proximos temas de evolucao do NetworkSentinelPRO. A ideia e servir como base para futuras issues e milestones.
 
+## Entregas recentes (ja no codigo)
+
+Resumo das modificacoes ja integradas; detalhe de setup em `README.md` (secao **Autenticacao do dashboard e da API**) e variaveis em `.env.example`.
+
+| Area | O que foi adicionado |
+|------|----------------------|
+| API | Gateway de autenticacao quando `AUTH_ENABLED=true`; rotas `/api/auth/*`; excecoes para health/readiness; WebSocket alinhado com o mesmo modelo de sessao/token |
+| Dashboard | Paginas `/login` e `/settings`; fluxo de sessao (JWT + cookie HttpOnly); painel de administracao de utilizadores |
+| Base de dados | Schema Drizzle para utilizadores (`lib/db/src/schema/auth.ts`) e definicoes (`lib/db/src/schema/settings.ts`) |
+| Operacao | Scripts `npm run auth:create-user`, `npm run auth:reset`; opcional LDAP (`AUTH_LDAP_*`); HTTPS local do Vite documentado no `.env.example` |
+| Bibliotecas | `lib/api-client-react` com suporte a pedidos autenticados onde aplicavel |
+
+Itens abaixo continuam em aberto ou so parcialmente cobertos (ex.: RBAC por papel fino, auditoria).
+
 ## Prioridade alta
 
 ### 1. Credenciais SNMP por fabricante e perfil
@@ -78,7 +92,8 @@ Objetivo:
 
 Entregas:
 
-- perfis de acesso por papel
+- **parcial**: login obrigatorio no dashboard e API protegida quando `AUTH_ENABLED=true`; gestao de utilizadores locais; LDAP opcional; segredo JWT e cookies documentados
+- perfis de acesso por papel (RBAC) alem de admin/operador basico
 - trilha de auditoria
 - mascaramento de segredos
 - hardening de configuracao
@@ -136,7 +151,7 @@ Entregas:
 
 ## Sugestao de primeiras issues
 
-- `Adicionar smoke tests HTTP para /api/healthz e /api/nodes`
+- `Adicionar smoke tests HTTP para /api/healthz, /api/auth/login e /api/nodes (com e sem AUTH_ENABLED)`
 - `Criar wizard inicial de descoberta de rede`
 - `Implementar perfis SNMP vendor-specific`
 - `Adicionar workflow operacional aos alertas`
