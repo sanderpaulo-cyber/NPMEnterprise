@@ -280,7 +280,10 @@ export default function SettingsPage() {
               <CardTitle>Conexão com a API</CardTitle>
               <CardDescription>
                 URL base opcional para o cliente HTTP gerado. Vazio utiliza o mesmo host e o proxy{" "}
-                <code className="text-xs">/api</code> do Vite.
+                <code className="text-xs">/api</code> do Vite. Para sessão por cookie (login), deixe
+                vazio: um URL directo para outro host (ex. <code className="text-xs">127.0.0.1</code>{" "}
+                com página em <code className="text-xs">localhost</code>) impede o cookie{" "}
+                <code className="text-xs">ns_session</code>.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 max-w-2xl">

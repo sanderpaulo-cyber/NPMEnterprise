@@ -11,6 +11,7 @@ import { Activity, Eye, EyeOff, ImageIcon, Lock, Shield, Smile } from "lucide-re
 import { UserAvatarBadge } from "@/components/user-avatar-badge";
 import { imageFileToAvatarDataUrl } from "@/lib/image-to-avatar-data-url";
 import { cn } from "@/lib/utils";
+import { sameOriginApiUrl } from "@/lib/same-origin-api";
 
 function passwordStrength(pw: string): { pct: number; label: string } {
   if (!pw) return { pct: 0, label: "" };
@@ -93,7 +94,7 @@ export default function LoginPage() {
         regBody.avatarImageUrl = regAvatarDataUrl;
       }
 
-      const r = await fetch("/api/auth/register", {
+      const r = await fetch(sameOriginApiUrl("/api/auth/register"), {
         method: "POST",
         headers: { "content-type": "application/json" },
         credentials: "include",

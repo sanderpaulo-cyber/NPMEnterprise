@@ -12,6 +12,7 @@ import {
   setDefaultCredentials,
 } from "@workspace/api-client-react";
 import { AUTH_TOKEN_STORAGE_KEY } from "@/lib/auth-token";
+import { sameOriginApiUrl } from "@/lib/same-origin-api";
 
 type AuthStatusResponse = {
   authRequired: boolean;
@@ -51,8 +52,13 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-const fetchAuth: typeof fetch = (input, init) =>
-  fetch(input, { ...init, credentials: "include" });
+const fetchAuth: typeof fetch = (input, init) => {
+  const resolved =
+    typeof input === "string" && input.startsWith("/api")
+      ? sameOriginApiUrl(input)
+      : input;
+  return fetch(resolved, { ...init, credentials: "include" });
+};
 
 function applyUserFromMe(
   body: { user?: SessionUserSnapshot },
@@ -155,7 +161,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const r = await fetchAuth("/api/auth/login", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ username: user, password: pass }),
+      body: JSON.stringify({
+        username: user.trim(),
+        password: typeof pass === "string" ? pass.trim() : pass,
+      }),
     });
     if (!r.ok) {
       const err = (await r.json().catch(() => ({}))) as { error?: string };

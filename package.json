@@ -20,6 +20,7 @@
     "auth:create-user": "node ./scripts/auth-create-user.cjs",
     "auth:reset": "node ./scripts/reset-auth-users.cjs",
     "auth:debug-users": "node ./scripts/auth-debug-list-users.cjs",
+    "auth:test-login": "node ./scripts/auth-test-login-http.cjs",
     "build": "corepack pnpm run typecheck && corepack pnpm -r --if-present run build",
     "typecheck:libs": "tsc --build",
     "typecheck": "corepack pnpm run typecheck:libs && corepack pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
