@@ -11,7 +11,7 @@ Resumo das modificacoes ja integradas; detalhe de setup em `README.md` (secao **
 | API | Gateway de autenticacao quando `AUTH_ENABLED=true`; rotas `/api/auth/*`; excecoes para health/readiness; WebSocket alinhado com o mesmo modelo de sessao/token |
 | Dashboard | Paginas `/login` e `/settings`; fluxo de sessao (JWT + cookie HttpOnly); painel de administracao de utilizadores |
 | Base de dados | Schema Drizzle para utilizadores (`lib/db/src/schema/auth.ts`) e definicoes (`lib/db/src/schema/settings.ts`) |
-| Operacao | Scripts `npm run auth:create-user`, `npm run auth:reset`; opcional LDAP (`AUTH_LDAP_*`); HTTPS local do Vite documentado no `.env.example` |
+| Operacao | Scripts `npm run auth:create-user`, `npm run auth:reset`; primeiro acesso sem `AUTH_BOOTSTRAP_*`: utilizador **admin** / **ChangeMeAdmin2026!** (alterar apos login); opcional LDAP (`AUTH_LDAP_*`); HTTPS local do Vite no `.env.example` |
 | Bibliotecas | `lib/api-client-react` com suporte a pedidos autenticados onde aplicavel |
 
 Itens abaixo continuam em aberto ou so parcialmente cobertos (ex.: RBAC por papel fino, auditoria).

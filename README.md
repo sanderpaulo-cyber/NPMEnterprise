@@ -250,9 +250,9 @@ Acessos padrao:
 
 1. Aplique o schema do banco (`corepack pnpm db:push`) para criar as tabelas de autenticacao e definicoes.
 2. No `.env`, defina `AUTH_ENABLED=true` e `AUTH_JWT_SECRET` com pelo menos 16 caracteres aleatorios.
-3. Crie o primeiro utilizador:
-   - variaveis `AUTH_BOOTSTRAP_USERNAME` / `AUTH_BOOTSTRAP_PASSWORD` na primeira subida com `auth_users` vazia, ou
-   - `npm run auth:create-user -- admin SuaPasswordForte`
+3. Primeiro utilizador (com `auth_users` vazia ao arrancar a API):
+   - **Predefinido**: se nao definir `AUTH_BOOTSTRAP_*`, a API cria **admin** com password **ChangeMeAdmin2026!** — altere logo apos o primeiro login.
+   - Opcional: defina `AUTH_BOOTSTRAP_USERNAME` / `AUTH_BOOTSTRAP_PASSWORD` no `.env`, ou `npm run auth:create-user -- admin SuaPasswordForte`.
 4. Reinicie a API. O dashboard passa a exigir login em `/login`. Utilizadores e opcoes administrativas ficam em `/settings`.
 
 Comandos uteis:
