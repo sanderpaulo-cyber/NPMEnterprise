@@ -38,8 +38,8 @@ app.use(
   }),
 );
 app.use(cookieParser());
-app.use(express.json({ limit: "256kb" }));
-app.use(express.urlencoded({ extended: true, limit: "256kb" }));
+app.use(express.json({ limit: "512kb" }));
+app.use(express.urlencoded({ extended: true, limit: "512kb" }));
 
 app.use("/api", router);
 

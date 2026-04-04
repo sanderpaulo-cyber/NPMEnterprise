@@ -1,6 +1,6 @@
 import { and, asc, count, eq, ne } from "drizzle-orm";
 import { db } from "@workspace/db";
-import { authUsersTable } from "@workspace/db/schema";
+import { authUsersTable, type AuthUser } from "@workspace/db/schema";
 import { hashPassword, verifyPassword } from "./password";
 import { signAuthToken } from "./jwt";
 import { isLdapConfigured } from "./config";
@@ -24,19 +24,11 @@ export type SessionUserPayload = {
   department: string | null;
   jobTitle: string | null;
   notes: string | null;
+  avatarEmoji: string | null;
+  avatarImageUrl: string | null;
 };
 
-export function rowToSessionUser(row: {
-  id: string;
-  username: string;
-  displayName: string | null;
-  authSource: string;
-  email: string | null;
-  phone: string | null;
-  department: string | null;
-  jobTitle: string | null;
-  notes: string | null;
-}): SessionUserPayload {
+export function rowToSessionUser(row: AuthUser): SessionUserPayload {
   return {
     id: row.id,
     username: row.username,
@@ -47,6 +39,8 @@ export function rowToSessionUser(row: {
     department: row.department,
     jobTitle: row.jobTitle,
     notes: row.notes,
+    avatarEmoji: row.avatarEmoji ?? null,
+    avatarImageUrl: row.avatarImageUrl ?? null,
   };
 }
 
@@ -191,6 +185,8 @@ export async function registerLocalUser(
       department: profile.department,
       jobTitle: profile.jobTitle,
       notes: profile.notes,
+      avatarEmoji: profile.avatarEmoji,
+      avatarImageUrl: profile.avatarImageUrl,
       passwordHash: hashPassword(password),
       authSource: "local",
     })
@@ -224,6 +220,8 @@ export type AuthUserListRow = {
   department: string | null;
   jobTitle: string | null;
   notes: string | null;
+  avatarEmoji: string | null;
+  avatarImageUrl: string | null;
 };
 
 export async function listAuthUsersForAdmin(): Promise<AuthUserListRow[]> {
@@ -243,6 +241,8 @@ export async function listAuthUsersForAdmin(): Promise<AuthUserListRow[]> {
       department: authUsersTable.department,
       jobTitle: authUsersTable.jobTitle,
       notes: authUsersTable.notes,
+      avatarEmoji: authUsersTable.avatarEmoji,
+      avatarImageUrl: authUsersTable.avatarImageUrl,
     })
     .from(authUsersTable)
     .orderBy(asc(authUsersTable.username));
@@ -262,6 +262,8 @@ export async function listAuthUsersForAdmin(): Promise<AuthUserListRow[]> {
     department: r.department,
     jobTitle: r.jobTitle,
     notes: r.notes,
+    avatarEmoji: r.avatarEmoji,
+    avatarImageUrl: r.avatarImageUrl,
   }));
 }
 
@@ -277,6 +279,8 @@ export async function adminUpdateUser(
     department?: string | null;
     jobTitle?: string | null;
     notes?: string | null;
+    avatarEmoji?: string | null;
+    avatarImageUrl?: string | null;
   },
   actorUserId: string,
 ) {
@@ -303,6 +307,8 @@ export async function adminUpdateUser(
     department?: string | null;
     jobTitle?: string | null;
     notes?: string | null;
+    avatarEmoji?: string | null;
+    avatarImageUrl?: string | null;
     updatedAt: Date;
   };
 
@@ -393,6 +399,12 @@ export async function adminUpdateUser(
   }
   if (patch.notes !== undefined) {
     updates.notes = patch.notes;
+  }
+  if (patch.avatarEmoji !== undefined) {
+    updates.avatarEmoji = patch.avatarEmoji;
+  }
+  if (patch.avatarImageUrl !== undefined) {
+    updates.avatarImageUrl = patch.avatarImageUrl;
   }
 
   if (Object.keys(updates).length === 1) {

@@ -49,6 +49,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { FileText, KeyRound, Pencil, Trash2, UserPlus } from "lucide-react";
+import { UserAvatarBadge } from "@/components/user-avatar-badge";
+import { imageFileToAvatarDataUrl } from "@/lib/image-to-avatar-data-url";
 
 type AdminUserRow = {
   id: string;
@@ -65,6 +67,8 @@ type AdminUserRow = {
   department: string | null;
   jobTitle: string | null;
   notes: string | null;
+  avatarEmoji: string | null;
+  avatarImageUrl: string | null;
 };
 
 function formatUserDate(iso: string | null | undefined): string {
@@ -91,6 +95,8 @@ type MeUser = {
   department: string | null;
   jobTitle: string | null;
   notes: string | null;
+  avatarEmoji: string | null;
+  avatarImageUrl: string | null;
 };
 
 /** Perfil da sessão: usa PATCH /api/auth/me (não depende de escolher a linha na tabela). */
@@ -109,6 +115,8 @@ function MyProfileCard() {
     department: "",
     jobTitle: "",
     notes: "",
+    avatarEmoji: "",
+    avatarImageUrl: null as string | null,
     newPassword: "",
   });
 
@@ -129,6 +137,8 @@ function MyProfileCard() {
         department: u.department ?? "",
         jobTitle: u.jobTitle ?? "",
         notes: u.notes ?? "",
+        avatarEmoji: u.avatarEmoji ?? "",
+        avatarImageUrl: u.avatarImageUrl ?? null,
         newPassword: "",
       }));
       setReady(true);
@@ -148,6 +158,8 @@ function MyProfileCard() {
         department: draft.department.trim() === "" ? null : draft.department.trim(),
         jobTitle: draft.jobTitle.trim() === "" ? null : draft.jobTitle.trim(),
         notes: draft.notes.trim() === "" ? null : draft.notes.trim(),
+        avatarEmoji: draft.avatarEmoji.trim() === "" ? null : draft.avatarEmoji.trim(),
+        avatarImageUrl: draft.avatarImageUrl,
       };
       if (authSource === "local") {
         body.username = draft.username.trim();
@@ -228,6 +240,68 @@ function MyProfileCard() {
               value={draft.displayName}
               onChange={(e) => setDraft((d) => ({ ...d, displayName: e.target.value }))}
             />
+          </div>
+          <div className="space-y-3 sm:col-span-2 rounded-lg border border-border/60 bg-muted/10 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Label className="text-sm">Identificação visual</Label>
+              <UserAvatarBadge
+                avatarImageUrl={draft.avatarImageUrl}
+                avatarEmoji={draft.avatarEmoji}
+                displayName={draft.displayName}
+                username={draft.username}
+                size="sm"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="my-emoji">Emoji (opcional)</Label>
+              <Input
+                id="my-emoji"
+                value={draft.avatarEmoji}
+                onChange={(e) => setDraft((d) => ({ ...d, avatarEmoji: e.target.value }))}
+                maxLength={32}
+                placeholder="Ex.: 👤"
+                className="font-sans text-lg"
+              />
+            </div>
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="space-y-2 flex-1 min-w-[200px]">
+                <Label htmlFor="my-avatar-file">Foto (opcional)</Label>
+                <Input
+                  id="my-avatar-file"
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  className="cursor-pointer text-sm"
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = "";
+                    if (!f) return;
+                    try {
+                      const url = await imageFileToAvatarDataUrl(f);
+                      setDraft((d) => ({ ...d, avatarImageUrl: url }));
+                    } catch (err) {
+                      toast({
+                        title: "Imagem inválida",
+                        description: err instanceof Error ? err.message : "Erro",
+                        variant: "destructive",
+                      });
+                    }
+                  }}
+                />
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                onClick={() => setDraft((d) => ({ ...d, avatarImageUrl: null }))}
+                disabled={!draft.avatarImageUrl}
+              >
+                Remover foto
+              </Button>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              A foto aparece no canto superior em vez do emoji. Formatos: PNG, JPEG, WebP, GIF.
+            </p>
           </div>
           <div className="space-y-2 sm:col-span-2">
             <Label htmlFor="my-email">Email</Label>
@@ -333,6 +407,8 @@ export function SettingsUsersPanel() {
     department: "",
     jobTitle: "",
     notes: "",
+    avatarEmoji: "",
+    avatarImageUrl: null as string | null,
   });
   const [profileDialog, setProfileDialog] = useState<AdminUserRow | null>(null);
   const [profileDraft, setProfileDraft] = useState({
@@ -342,6 +418,8 @@ export function SettingsUsersPanel() {
     department: "",
     jobTitle: "",
     notes: "",
+    avatarEmoji: "",
+    avatarImageUrl: null as string | null,
   });
 
   useEffect(() => {
@@ -353,6 +431,8 @@ export function SettingsUsersPanel() {
       department: profileDialog.department ?? "",
       jobTitle: profileDialog.jobTitle ?? "",
       notes: profileDialog.notes ?? "",
+      avatarEmoji: profileDialog.avatarEmoji ?? "",
+      avatarImageUrl: profileDialog.avatarImageUrl ?? null,
     });
   }, [profileDialog]);
   const [pwdDialog, setPwdDialog] = useState<{ id: string; username: string } | null>(null);
@@ -377,6 +457,10 @@ export function SettingsUsersPanel() {
           department: newUser.department.trim() || undefined,
           jobTitle: newUser.jobTitle.trim() || undefined,
           notes: newUser.notes.trim() || undefined,
+          ...(newUser.avatarEmoji.trim()
+            ? { avatarEmoji: newUser.avatarEmoji.trim() }
+            : {}),
+          ...(newUser.avatarImageUrl ? { avatarImageUrl: newUser.avatarImageUrl } : {}),
         }),
       });
       if (!res.ok) {
@@ -395,6 +479,8 @@ export function SettingsUsersPanel() {
         department: "",
         jobTitle: "",
         notes: "",
+        avatarEmoji: "",
+        avatarImageUrl: null,
       });
       toast({ title: "Utilizador criado" });
     },
@@ -413,6 +499,8 @@ export function SettingsUsersPanel() {
     department?: string | null;
     jobTitle?: string | null;
     notes?: string | null;
+    avatarEmoji?: string | null;
+    avatarImageUrl?: string | null;
   };
 
   const patchMut = useMutation({
@@ -473,6 +561,9 @@ export function SettingsUsersPanel() {
         profileDraft.department.trim() === "" ? null : profileDraft.department.trim(),
       jobTitle: profileDraft.jobTitle.trim() === "" ? null : profileDraft.jobTitle.trim(),
       notes: profileDraft.notes.trim() === "" ? null : profileDraft.notes.trim(),
+      avatarEmoji:
+        profileDraft.avatarEmoji.trim() === "" ? null : profileDraft.avatarEmoji.trim(),
+      avatarImageUrl: profileDraft.avatarImageUrl,
     };
     if (profileDialog.authSource === "local") {
       fichaBody.username = profileDraft.username.trim();
@@ -561,6 +652,57 @@ export function SettingsUsersPanel() {
             </div>
           </div>
           <div className="rounded-lg border border-border/70 bg-muted/15 p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Identificação visual (opcional)
+              </p>
+              <UserAvatarBadge
+                avatarImageUrl={newUser.avatarImageUrl}
+                avatarEmoji={newUser.avatarEmoji}
+                displayName={newUser.displayName}
+                username={newUser.username}
+                size="sm"
+              />
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="su-emoji">Emoji</Label>
+                <Input
+                  id="su-emoji"
+                  value={newUser.avatarEmoji}
+                  onChange={(e) => setNewUser((s) => ({ ...s, avatarEmoji: e.target.value }))}
+                  maxLength={32}
+                  placeholder="👤"
+                  className="font-sans text-lg"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="su-avatar">Foto</Label>
+                <Input
+                  id="su-avatar"
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  className="cursor-pointer text-sm"
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = "";
+                    if (!f) return;
+                    try {
+                      const url = await imageFileToAvatarDataUrl(f);
+                      setNewUser((s) => ({ ...s, avatarImageUrl: url }));
+                    } catch (err) {
+                      toast({
+                        title: "Imagem inválida",
+                        description: err instanceof Error ? err.message : "Erro",
+                        variant: "destructive",
+                      });
+                    }
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+          <div className="rounded-lg border border-border/70 bg-muted/15 p-4 space-y-3">
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
               Dados complementares (opcional)
             </p>
@@ -641,6 +783,7 @@ export function SettingsUsersPanel() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-14 text-center">Avatar</TableHead>
                   <TableHead>Utilizador</TableHead>
                   <TableHead className="hidden md:table-cell max-w-[160px]">Email</TableHead>
                   <TableHead className="hidden lg:table-cell">ID interno</TableHead>
@@ -665,6 +808,17 @@ export function SettingsUsersPanel() {
                   const isSelf = u.id === userId;
                   return (
                     <TableRow key={u.id} className={u.disabled ? "opacity-60" : undefined}>
+                      <TableCell className="w-14 text-center align-middle">
+                        <div className="flex justify-center">
+                          <UserAvatarBadge
+                            avatarImageUrl={u.avatarImageUrl}
+                            avatarEmoji={u.avatarEmoji}
+                            displayName={u.displayName}
+                            username={u.username}
+                            size="sm"
+                          />
+                        </div>
+                      </TableCell>
                       <TableCell className="font-mono text-sm font-medium">
                         {u.username}
                         {isSelf ? (
@@ -918,6 +1072,21 @@ export function SettingsUsersPanel() {
           </DialogHeader>
           {profileDialog ? (
             <div className="grid gap-3 py-2">
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/10 p-3">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground">Identificação visual</p>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    Foto tem prioridade sobre o emoji no dashboard.
+                  </p>
+                </div>
+                <UserAvatarBadge
+                  avatarImageUrl={profileDraft.avatarImageUrl}
+                  avatarEmoji={profileDraft.avatarEmoji}
+                  displayName={profileDialog.displayName}
+                  username={profileDialog.username}
+                  size="sm"
+                />
+              </div>
               <div className="space-y-2">
                 <Label htmlFor="pf-user">Utilizador (login)</Label>
                 <Input
@@ -929,6 +1098,54 @@ export function SettingsUsersPanel() {
                   }
                   disabled={profileDialog.authSource !== "local"}
                 />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="pf-emoji">Emoji</Label>
+                <Input
+                  id="pf-emoji"
+                  value={profileDraft.avatarEmoji}
+                  onChange={(e) =>
+                    setProfileDraft((d) => ({ ...d, avatarEmoji: e.target.value }))
+                  }
+                  maxLength={32}
+                  className="font-sans text-lg"
+                  placeholder="Opcional"
+                />
+              </div>
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="space-y-2 flex-1 min-w-[200px]">
+                  <Label htmlFor="pf-avatar">Foto</Label>
+                  <Input
+                    id="pf-avatar"
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
+                    className="cursor-pointer text-sm"
+                    onChange={async (e) => {
+                      const f = e.target.files?.[0];
+                      e.target.value = "";
+                      if (!f) return;
+                      try {
+                        const url = await imageFileToAvatarDataUrl(f);
+                        setProfileDraft((d) => ({ ...d, avatarImageUrl: url }));
+                      } catch (err) {
+                        toast({
+                          title: "Imagem inválida",
+                          description: err instanceof Error ? err.message : "Erro",
+                          variant: "destructive",
+                        });
+                      }
+                    }}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setProfileDraft((d) => ({ ...d, avatarImageUrl: null }))}
+                  disabled={!profileDraft.avatarImageUrl}
+                >
+                  Remover foto
+                </Button>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="pf-email">Email</Label>

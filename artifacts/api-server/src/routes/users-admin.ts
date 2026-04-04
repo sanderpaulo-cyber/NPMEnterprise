@@ -137,6 +137,8 @@ router.patch("/:id", async (req: Request, res: Response): Promise<void> => {
         department: updated.department,
         jobTitle: updated.jobTitle,
         notes: updated.notes,
+        avatarEmoji: updated.avatarEmoji,
+        avatarImageUrl: updated.avatarImageUrl,
         hasLocalPassword:
           updated.passwordHash != null && updated.passwordHash.length > 0,
       },

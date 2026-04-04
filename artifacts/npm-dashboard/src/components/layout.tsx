@@ -11,13 +11,13 @@ import {
   Search,
   Bell,
   Settings,
-  User,
   Wifi
 } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { useWebSocket } from "@/hooks/use-websocket";
 import { useAuth } from "@/context/auth-context";
+import { UserAvatarBadge } from "@/components/user-avatar-badge";
 import { LogOut } from "lucide-react";
 import { ApiStatusBanner } from "@/components/api-status-banner";
 import { Input } from "@/components/ui/input";
@@ -40,7 +40,15 @@ const navItems = [
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location, setLocation] = useLocation();
-  const { authRequired, accessToken, logout, username } = useAuth();
+  const {
+    authRequired,
+    accessToken,
+    logout,
+    username,
+    displayName,
+    avatarEmoji,
+    avatarImageUrl,
+  } = useAuth();
   const { isConnected } = useWebSocket({
     authRequired,
     token: accessToken,
@@ -156,8 +164,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 <span className="hidden sm:inline max-w-[100px] truncate">{username}</span>
               </Button>
             )}
-            <div className="h-8 w-8 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center text-primary ml-2">
-              <User className="h-4 w-4" />
+            <div className="ml-2 shrink-0">
+              <UserAvatarBadge
+                avatarImageUrl={avatarImageUrl}
+                avatarEmoji={avatarEmoji}
+                displayName={displayName}
+                username={username}
+              />
             </div>
           </div>
         </header>

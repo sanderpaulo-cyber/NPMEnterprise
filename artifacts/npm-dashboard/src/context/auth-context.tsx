@@ -21,6 +21,15 @@ type AuthStatusResponse = {
   sessionCookie?: boolean;
 };
 
+/** Dados públicos do utilizador devolvidos pelo login e GET /api/auth/me. */
+export type SessionUserSnapshot = {
+  id: string;
+  username: string;
+  displayName: string | null;
+  avatarEmoji: string | null;
+  avatarImageUrl: string | null;
+};
+
 type AuthContextValue = {
   ready: boolean;
   authRequired: boolean;
@@ -31,6 +40,9 @@ type AuthContextValue = {
   registerAllowed: boolean;
   username: string | null;
   userId: string | null;
+  displayName: string | null;
+  avatarEmoji: string | null;
+  avatarImageUrl: string | null;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   /** Rele /api/auth/me (apos mudar nome de login ou dados no servidor). */
@@ -42,6 +54,24 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 const fetchAuth: typeof fetch = (input, init) =>
   fetch(input, { ...init, credentials: "include" });
 
+function applyUserFromMe(
+  body: { user?: SessionUserSnapshot },
+  setters: {
+    setUsername: (v: string | null) => void;
+    setUserId: (v: string | null) => void;
+    setDisplayName: (v: string | null) => void;
+    setAvatarEmoji: (v: string | null) => void;
+    setAvatarImageUrl: (v: string | null) => void;
+  },
+): void {
+  const u = body.user;
+  setters.setUsername(u?.username ?? null);
+  setters.setUserId(u?.id ?? null);
+  setters.setDisplayName(u?.displayName ?? null);
+  setters.setAvatarEmoji(u?.avatarEmoji ?? null);
+  setters.setAvatarImageUrl(u?.avatarImageUrl ?? null);
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [authRequired, setAuthRequired] = useState(false);
@@ -50,6 +80,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [bearerToken, setBearerToken] = useState<string | null>(null);
   const [username, setUsername] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [displayName, setDisplayName] = useState<string | null>(null);
+  const [avatarEmoji, setAvatarEmoji] = useState<string | null>(null);
+  const [avatarImageUrl, setAvatarImageUrl] = useState<string | null>(null);
 
   useEffect(() => {
     setDefaultCredentials("include");
@@ -76,6 +109,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setBearerToken(null);
           setUsername(null);
           setUserId(null);
+          setDisplayName(null);
+          setAvatarEmoji(null);
+          setAvatarImageUrl(null);
           setReady(true);
           return;
         }
@@ -83,15 +119,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const me = await fetchAuth("/api/auth/me");
         if (cancelled) return;
         if (me.ok) {
-          const body = (await me.json()) as {
-            user?: { username: string; id: string };
-          };
-          setUsername(body.user?.username ?? null);
-          setUserId(body.user?.id ?? null);
+          const body = (await me.json()) as { user?: SessionUserSnapshot };
+          applyUserFromMe(body, {
+            setUsername,
+            setUserId,
+            setDisplayName,
+            setAvatarEmoji,
+            setAvatarImageUrl,
+          });
           setBearerToken(null);
         } else {
           setUsername(null);
           setUserId(null);
+          setDisplayName(null);
+          setAvatarEmoji(null);
+          setAvatarImageUrl(null);
           setBearerToken(null);
           try {
             sessionStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
@@ -123,7 +165,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error(err.error ?? "Falha no login");
     }
     const data = (await r.json()) as {
-      user: { username: string; id: string };
+      user: SessionUserSnapshot;
       token?: string;
     };
     if (data.token) {
@@ -143,17 +185,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setUsername(data.user.username);
     setUserId(data.user.id);
+    setDisplayName(data.user.displayName ?? null);
+    setAvatarEmoji(data.user.avatarEmoji ?? null);
+    setAvatarImageUrl(data.user.avatarImageUrl ?? null);
   }, []);
 
   const refreshSession = useCallback(async () => {
     try {
       const me = await fetchAuth("/api/auth/me");
       if (me.ok) {
-        const body = (await me.json()) as {
-          user?: { username: string; id: string };
-        };
-        setUsername(body.user?.username ?? null);
-        setUserId(body.user?.id ?? null);
+        const body = (await me.json()) as { user?: SessionUserSnapshot };
+        applyUserFromMe(body, {
+          setUsername,
+          setUserId,
+          setDisplayName,
+          setAvatarEmoji,
+          setAvatarImageUrl,
+        });
       }
     } catch {
       /* ignore */
@@ -174,6 +222,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setBearerToken(null);
     setUsername(null);
     setUserId(null);
+    setDisplayName(null);
+    setAvatarEmoji(null);
+    setAvatarImageUrl(null);
   }, []);
 
   const value = useMemo(
@@ -186,6 +237,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       registerAllowed,
       username,
       userId,
+      displayName,
+      avatarEmoji,
+      avatarImageUrl,
       login,
       logout,
       refreshSession,
@@ -195,6 +249,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       authRequired,
       username,
       userId,
+      displayName,
+      avatarEmoji,
+      avatarImageUrl,
       bearerToken,
       ldapConfigured,
       registerAllowed,

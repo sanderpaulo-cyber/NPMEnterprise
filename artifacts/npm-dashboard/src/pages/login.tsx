@@ -7,7 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Activity, Eye, EyeOff, Lock, Shield } from "lucide-react";
+import { Activity, Eye, EyeOff, ImageIcon, Lock, Shield, Smile } from "lucide-react";
+import { UserAvatarBadge } from "@/components/user-avatar-badge";
+import { imageFileToAvatarDataUrl } from "@/lib/image-to-avatar-data-url";
 import { cn } from "@/lib/utils";
 
 function passwordStrength(pw: string): { pct: number; label: string } {
@@ -39,6 +41,9 @@ export default function LoginPage() {
   const [regPhone, setRegPhone] = useState("");
   const [regDepartment, setRegDepartment] = useState("");
   const [regJobTitle, setRegJobTitle] = useState("");
+  const [regAvatarMode, setRegAvatarMode] = useState<"none" | "emoji" | "photo">("none");
+  const [regAvatarEmoji, setRegAvatarEmoji] = useState("");
+  const [regAvatarDataUrl, setRegAvatarDataUrl] = useState<string | null>(null);
   const [tab, setTab] = useState<"login" | "register">("login");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -72,19 +77,27 @@ export default function LoginPage() {
     setError(null);
     setLoading(true);
     try {
+      const regBody: Record<string, unknown> = {
+        username,
+        password,
+        displayName: displayName.trim() || username,
+        email: regEmail.trim() || undefined,
+        phone: regPhone.trim() || undefined,
+        department: regDepartment.trim() || undefined,
+        jobTitle: regJobTitle.trim() || undefined,
+      };
+      if (regAvatarMode === "emoji" && regAvatarEmoji.trim()) {
+        regBody.avatarEmoji = regAvatarEmoji.trim();
+      }
+      if (regAvatarMode === "photo" && regAvatarDataUrl) {
+        regBody.avatarImageUrl = regAvatarDataUrl;
+      }
+
       const r = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "content-type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({
-          username,
-          password,
-          displayName: displayName.trim() || username,
-          email: regEmail.trim() || undefined,
-          phone: regPhone.trim() || undefined,
-          department: regDepartment.trim() || undefined,
-          jobTitle: regJobTitle.trim() || undefined,
-        }),
+        body: JSON.stringify(regBody),
       });
       if (!r.ok) {
         const err = (await r.json().catch(() => ({}))) as { error?: string };
@@ -220,6 +233,87 @@ export default function LoginPage() {
                     Apenas minúsculas, números e{" "}
                     <code className="text-[11px]">._-@+</code>
                   </p>
+                </div>
+                <div className="rounded-xl border border-border/60 bg-muted/20 px-4 py-4 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                      Identificação visual (opcional)
+                    </p>
+                    <UserAvatarBadge
+                      avatarImageUrl={regAvatarMode === "photo" ? regAvatarDataUrl : null}
+                      avatarEmoji={regAvatarMode === "emoji" ? regAvatarEmoji : null}
+                      displayName={displayName.trim() || username}
+                      username={username}
+                      size="sm"
+                    />
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-snug">
+                    Aparece no canto superior após entrar. Pode usar um emoji ou uma foto (reduzida
+                    automaticamente).
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {(
+                      [
+                        ["none", "Nenhum", null],
+                        ["emoji", "Emoji", Smile],
+                        ["photo", "Foto", ImageIcon],
+                      ] as const
+                    ).map(([mode, label, Icon]) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => {
+                          setRegAvatarMode(mode);
+                          if (mode !== "emoji") setRegAvatarEmoji("");
+                          if (mode !== "photo") setRegAvatarDataUrl(null);
+                        }}
+                        className={cn(
+                          "inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors",
+                          regAvatarMode === mode
+                            ? "border-primary bg-primary/15 text-primary"
+                            : "border-border/80 bg-background/40 text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        {Icon ? <Icon className="h-3.5 w-3.5 opacity-80" /> : null}
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {regAvatarMode === "emoji" ? (
+                    <div className="space-y-2">
+                      <Label htmlFor="reg-emoji">Emoji ou símbolo</Label>
+                      <Input
+                        id="reg-emoji"
+                        value={regAvatarEmoji}
+                        onChange={(e) => setRegAvatarEmoji(e.target.value)}
+                        maxLength={32}
+                        placeholder="Ex.: 👤 ou 🛡️"
+                        className="h-11 rounded-xl border-border/80 bg-background/50"
+                      />
+                    </div>
+                  ) : null}
+                  {regAvatarMode === "photo" ? (
+                    <div className="space-y-2">
+                      <Label htmlFor="reg-avatar-file">Foto de perfil</Label>
+                      <Input
+                        id="reg-avatar-file"
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp,image/gif"
+                        className="h-11 cursor-pointer rounded-xl border-border/80 bg-background/50 text-sm file:mr-3"
+                        onChange={async (e) => {
+                          const f = e.target.files?.[0];
+                          e.target.value = "";
+                          if (!f) return;
+                          try {
+                            const url = await imageFileToAvatarDataUrl(f);
+                            setRegAvatarDataUrl(url);
+                          } catch (err) {
+                            setError(err instanceof Error ? err.message : "Imagem inválida");
+                          }
+                        }}
+                      />
+                    </div>
+                  ) : null}
                 </div>
                 <div className="rounded-xl border border-border/60 bg-muted/20 px-4 py-4 space-y-4">
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">

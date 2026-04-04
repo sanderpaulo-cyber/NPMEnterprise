@@ -254,6 +254,7 @@ Acessos padrao:
    - **Predefinido**: se nao definir `AUTH_BOOTSTRAP_*`, a API cria **admin** com password **ChangeMeAdmin2026!** — altere logo apos o primeiro login.
    - Opcional: defina `AUTH_BOOTSTRAP_USERNAME` / `AUTH_BOOTSTRAP_PASSWORD` no `.env`, ou `npm run auth:create-user -- admin SuaPasswordForte`.
 4. Reinicie a API. O dashboard passa a exigir login em `/login`. Utilizadores e opcoes administrativas ficam em `/settings`.
+5. **Avatar**: no registo (se activo) ou em **Configuracoes → Utilizadores → O meu perfil**, pode definir um **emoji** ou uma **foto** (reduzida no browser); a imagem tem prioridade e aparece no canto superior ao lado do nome.
 
 Comandos uteis:
 
