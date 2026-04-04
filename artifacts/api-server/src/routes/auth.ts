@@ -75,7 +75,7 @@ router.post(
     const username =
       typeof req.body?.username === "string" ? req.body.username : "";
     const password =
-      typeof req.body?.password === "string" ? req.body.password : "";
+      typeof req.body?.password === "string" ? req.body.password.trim() : "";
 
     try {
       const result = await loginWithPassword(username, password);

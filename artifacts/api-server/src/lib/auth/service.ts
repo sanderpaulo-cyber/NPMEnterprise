@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { authUsersTable, type AuthUser } from "@workspace/db/schema";
 import { hashPassword, verifyPassword } from "./password";
 import { signAuthToken } from "./jwt";
+import { logger } from "../logger";
 import { isLdapConfigured } from "./config";
 import { tryLdapBind } from "./ldap";
 import {
@@ -71,7 +72,12 @@ export async function loginWithPassword(
 
   const row = await findUserByUsername(u);
 
-  if (row && !row.disabled && row.passwordHash && verifyPassword(password, row.passwordHash)) {
+  if (
+    row &&
+    !row.disabled &&
+    row.passwordHash &&
+    verifyPassword(password, row.passwordHash)
+  ) {
     const token = await signAuthToken({
       userId: row.id,
       username: row.username,
@@ -128,6 +134,24 @@ export async function loginWithPassword(
         user: rowToSessionUser(userRow),
       };
     }
+  }
+
+  if (!row) {
+    logger.warn({ username: u }, "Login falhou: utilizador inexistente nesta base de dados");
+  } else if (row.disabled) {
+    logger.warn({ username: u }, "Login falhou: conta desactivada");
+  } else if (!row.passwordHash || row.passwordHash.length === 0) {
+    logger.warn(
+      { username: u, authSource: row.authSource },
+      "Login falhou: conta sem password local (LDAP/OAuth ou hash em falta); use LDAP ou npm run auth:create-user",
+    );
+  } else if (!row.passwordHash.startsWith("scrypt$")) {
+    logger.warn(
+      { username: u, hashPrefix: row.passwordHash.slice(0, 16) },
+      "Login falhou: formato de hash desconhecido (esperado scrypt$); redefina a password com npm run auth:create-user ou auth:reset",
+    );
+  } else {
+    logger.warn({ username: u }, "Login falhou: password incorrecta");
   }
 
   const err = new Error("Credenciais invalidas");

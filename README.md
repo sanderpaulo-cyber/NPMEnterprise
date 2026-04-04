@@ -543,12 +543,14 @@ O workflow roda em `push` para `main` e em `pull_request`.
 
 ### Login com `admin` falha (credenciais invalidas ou volta ao login)
 
-1. **Password predefinida** (primeiro utilizador / bootstrap): `ChangeMeAdmin2026!` — respeite maiúsculas e o `!` no fim. O utilizador é **`admin`** (minúsculas no login).
-2. Se já existiam utilizadores na base antes do bootstrap, a password pode ser outra. Redefina com: `npm run auth:reset` (ou `npm run auth:create-user -- admin NovaPasswordForte123`).
-3. Confirme `AUTH_ENABLED=true` e `AUTH_JWT_SECRET` (≥16 caracteres) no `.env` e reinicie a API.
-4. **LDAP**: se `AUTH_LDAP_URL` estiver preenchido mas o servidor LDAP não estiver acessível, o login local deve funcionar na mesma (a API ignora erros de LDAP após tentar a password local). Se ainda falhar, comente temporariamente as variáveis `AUTH_LDAP_*` e reinicie.
-5. **Dashboard em HTTPS** (`WEB_HTTPS=1`): o proxy Vite envia `X-Forwarded-Proto` para a API definir o cookie `ns_session` corretamente. Se usar **URL directa** da API no browser (`VITE_API_BASE_URL=http://127.0.0.1:8080`) com página em `https://localhost`, o cookie pode não acompanhar os pedidos — deixe `VITE_API_BASE_URL` vazio para usar o proxy `/api` no mesmo host.
-6. Em último caso, defina `AUTH_COOKIE_SECURE=false` no `.env` da API (só desenvolvimento) se o cookie não for gravado.
+1. Na **mesma máquina onde corre a API**, execute `npm run auth:debug-users` — confirma se existe `admin`, se tem hash e se a password `ChangeMeAdmin2026!` bate certo com a base a que o `.env` aponta. Se aqui falhar, rode `npm run auth:reset` nessa máquina.
+2. **Password predefinida** (primeiro utilizador / bootstrap): `ChangeMeAdmin2026!` — respeite maiúsculas e o `!` no fim. O utilizador é **`admin`** (minúsculas no login).
+3. Se já existiam utilizadores na base antes do bootstrap, a password pode ser outra. Redefina com: `npm run auth:reset` (ou `npm run auth:create-user -- admin NovaPasswordForte123`).
+4. Confirme `AUTH_ENABLED=true` e `AUTH_JWT_SECRET` (≥16 caracteres) no `.env` e reinicie a API.
+5. Com a API actualizada, após uma tentativa de login falhada os **logs da API** indicam o motivo (utilizador inexistente nesta BD, sem password local, hash inválido, ou password errada).
+6. **LDAP**: se `AUTH_LDAP_URL` estiver preenchido mas o servidor LDAP não estiver acessível, o login local deve funcionar na mesma (a API ignora erros de LDAP após tentar a password local). Se ainda falhar, comente temporariamente as variáveis `AUTH_LDAP_*` e reinicie.
+7. **Dashboard em HTTPS** (`WEB_HTTPS=1`): o proxy Vite envia `X-Forwarded-Proto` para a API definir o cookie `ns_session` corretamente. Se usar **URL directa** da API no browser (`VITE_API_BASE_URL=http://127.0.0.1:8080`) com página em `https://localhost`, o cookie pode não acompanhar os pedidos — deixe `VITE_API_BASE_URL` vazio para usar o proxy `/api` no mesmo host.
+8. Em último caso, defina `AUTH_COOKIE_SECURE=false` no `.env` da API (só desenvolvimento) se o cookie não for gravado.
 
 ### `pnpm` nao reconhecido
 
