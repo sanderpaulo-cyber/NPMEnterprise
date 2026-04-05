@@ -200,8 +200,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        {/* Page Content */}
-        <div className="relative flex-1 scroll-smooth overflow-y-auto p-6 md:p-8">
+        {/* Page Content — min-h-0 permite que filhos (ex. topologia) usem flex-1 e preencham a altura útil */}
+        <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto scroll-smooth p-6 md:p-8">
           <div
             className="pointer-events-none absolute left-[-15%] top-[-25%] h-[45%] w-[55%] rounded-full bg-primary/[0.06] blur-[100px]"
             aria-hidden
@@ -211,7 +211,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
             aria-hidden
           />
 
-          <div className="relative z-10 mx-auto w-full max-w-[90rem]">{children}</div>
+          <div className="relative z-10 mx-auto flex h-full min-h-0 w-full max-w-[90rem] flex-col">
+            {children}
+          </div>
         </div>
       </main>
     </div>

@@ -1,6 +1,18 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
-import { nodesTable, topologyEdgesTable } from "@workspace/db/schema";
+import { networkScopesTable, nodesTable, topologyEdgesTable } from "@workspace/db/schema";
+
+const DEFAULT_TOPOLOGY_PREFIX = 24;
+
+function parseCidrPrefixLength(cidr: string | null | undefined): number | null {
+  if (cidr == null || typeof cidr !== "string") return null;
+  const trimmed = cidr.trim();
+  const slash = trimmed.lastIndexOf("/");
+  if (slash < 0 || slash === trimmed.length - 1) return null;
+  const p = Number(trimmed.slice(slash + 1));
+  if (!Number.isInteger(p) || p < 0 || p > 32) return null;
+  return p;
+}
 
 const router: IRouter = Router();
 
@@ -49,8 +61,19 @@ function randomLatency(base: number, variance: number): number {
 
 router.get("/", async (req, res) => {
   try {
-    const nodes = await db.select().from(nodesTable).limit(200);
-    const edges = await db.select().from(topologyEdgesTable).limit(1000);
+    const [nodes, edges, scopes] = await Promise.all([
+      db.select().from(nodesTable).limit(200),
+      db.select().from(topologyEdgesTable).limit(1000),
+      db
+        .select({ id: networkScopesTable.id, cidr: networkScopesTable.cidr })
+        .from(networkScopesTable),
+    ]);
+
+    const prefixByScopeId = new Map<string, number>();
+    for (const scope of scopes) {
+      const fromCidr = parseCidrPrefixLength(scope.cidr);
+      prefixByScopeId.set(scope.id, fromCidr ?? DEFAULT_TOPOLOGY_PREFIX);
+    }
 
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
     const grouped = new Map<
@@ -248,22 +271,29 @@ router.get("/", async (req, res) => {
             },
           ]
         : []),
-      ...nodes.map((n) => ({
-        id: n.id,
-        name: n.name,
-        ipAddress: n.ipAddress,
-        type: n.type,
-        status: n.status,
-        vendor: n.vendor,
-        model: n.model,
-        location: n.location,
-        cpuUsage: n.cpuUsage,
-        memUsage: n.memUsage,
-        degree: degreeByNode.get(n.id) ?? 0,
-        isVirtual: false,
-        lastPolled: n.lastPolled?.toISOString(),
-        createdAt: n.createdAt.toISOString(),
-      })),
+      ...nodes.map((n) => {
+        const subnetPrefixLength =
+          n.discoveryScopeId != null && prefixByScopeId.has(n.discoveryScopeId)
+            ? prefixByScopeId.get(n.discoveryScopeId)!
+            : DEFAULT_TOPOLOGY_PREFIX;
+        return {
+          id: n.id,
+          name: n.name,
+          ipAddress: n.ipAddress,
+          type: n.type,
+          status: n.status,
+          vendor: n.vendor,
+          model: n.model,
+          location: n.location,
+          cpuUsage: n.cpuUsage,
+          memUsage: n.memUsage,
+          degree: degreeByNode.get(n.id) ?? 0,
+          isVirtual: false,
+          subnetPrefixLength,
+          lastPolled: n.lastPolled?.toISOString(),
+          createdAt: n.createdAt.toISOString(),
+        };
+      }),
     ];
 
     res.json({

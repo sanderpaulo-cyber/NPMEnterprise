@@ -382,7 +382,7 @@ Observacoes:
 - `/nodes`: inventario e cadastro de dispositivos
 - `/nodes/:id`: detalhe tecnico do dispositivo
 - `/discovery`: descoberta em sub-redes
-- `/topology`: topologia e interligacoes
+- `/topology`: topologia e interligacoes (ver [docs/DASHBOARD-TOPOLOGIA.md](docs/DASHBOARD-TOPOLOGIA.md) — prefixos L3 por scope, redimensionar área do mapa, ecrã inteiro e ESC)
 - `/alerts`: alertas e tratativas
 - `/poller`: estado do motor de coleta
 - `/netpath`: analise de caminho
@@ -399,6 +399,7 @@ Observacoes:
 
 ## Novidades da versao
 
+- **Topology Map (dashboard + API)**: resposta `/api/topology` com `subnetPrefixLength` por scope (CIDR); mapa agrupa por prefixo real (`/16`, `/24`, etc.) e LPM para gateways; layout com `min-h-0` para o mapa preencher a altura; redimensionar painel superior (arrastar/clique, `sessionStorage`); modo ecrã inteiro com **ESC** para sair. Detalhes e passos em [docs/DASHBOARD-TOPOLOGIA.md](docs/DASHBOARD-TOPOLOGIA.md).
 - **Autenticacao e seguranca**: login no dashboard (`/login`), JWT e cookie HttpOnly; API com gateway de auth quando `AUTH_ENABLED=true`; rotas `/api/auth/*`, definicoes e administracao de utilizadores em `/settings`; tabelas Drizzle `auth_users` e definicoes persistidas; scripts `npm run auth:create-user` e `npm run auth:reset`; LDAP opcional (variaveis em `.env.example`).
 - descoberta com suporte a `CIDR`, range de IP e roteador principal
 - limpeza de resultados de discovery para reexecutar coletas produtivas

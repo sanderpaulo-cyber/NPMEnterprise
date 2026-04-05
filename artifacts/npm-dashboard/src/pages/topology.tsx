@@ -3,7 +3,21 @@ import { authFetch } from "@/lib/auth-fetch";
 import { Card, CardContent } from "@/components/ui/card";
 import ForceGraph2D from "react-force-graph-2d";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Activity, GitBranch, Radar, Server, Share2, Shield } from "lucide-react";
+import { createPortal } from "react-dom";
+import {
+  Activity,
+  ChevronDown,
+  ChevronUp,
+  GitBranch,
+  GripHorizontal,
+  Maximize2,
+  Radar,
+  Server,
+  Share2,
+  Shield,
+  X,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface TopologyNodeData {
   id: string;
@@ -18,6 +32,8 @@ interface TopologyNodeData {
   memUsage?: number | null;
   degree: number;
   isVirtual?: boolean;
+  /** Prefixo L3 do scope de descoberta (ex.: 16 em 10.0.0.0/16). Omite-se → 24. */
+  subnetPrefixLength?: number;
   lastPolled?: string;
   createdAt?: string;
 }
@@ -65,15 +81,102 @@ function normalizeToken(value?: string | null) {
   return value?.trim().toLowerCase() ?? "";
 }
 
+const DEFAULT_SUBNET_PREFIX = 24;
+
+function nodeSubnetPrefix(n: TopologyNodeData): number {
+  const p = n.subnetPrefixLength;
+  if (p == null || !Number.isFinite(p)) return DEFAULT_SUBNET_PREFIX;
+  const r = Math.round(p);
+  if (r < 0 || r > 32) return DEFAULT_SUBNET_PREFIX;
+  return r;
+}
+
+function parseIpv4ToInt(ipAddress: string): number | null {
+  const parts = ipAddress.trim().split(".");
+  if (parts.length !== 4) return null;
+  const o = parts.map((x) => Number(x));
+  if (o.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+  return (((o[0] << 24) | (o[1] << 16) | (o[2] << 8) | o[3]) >>> 0) as number;
+}
+
+function formatIpv4FromInt(n: number): string {
+  return `${(n >>> 24) & 0xff}.${(n >>> 16) & 0xff}.${(n >>> 8) & 0xff}.${n & 0xff}`;
+}
+
+/** Chave canónica da rede IPv4 para o prefixo dado (ex.: 10.0.5.9 + 16 → 10.0.0.0/16). */
+function getNetworkSegmentKey(ipAddress: string, prefixLength: number): string {
+  const n = parseIpv4ToInt(ipAddress);
+  if (n === null) return ipAddress;
+  const p = Math.max(0, Math.min(32, Math.round(prefixLength)));
+  const mask = p === 0 ? 0 : ((0xffffffff << (32 - p)) >>> 0) as number;
+  const net = (n & mask) >>> 0;
+  return `${formatIpv4FromInt(net)}/${p}`;
+}
+
+function parseSegmentKey(key: string): { base: number; prefix: number } | null {
+  const slash = key.lastIndexOf("/");
+  if (slash < 0) return null;
+  const base = parseIpv4ToInt(key.slice(0, slash));
+  const prefix = Number(key.slice(slash + 1));
+  if (base === null || !Number.isInteger(prefix) || prefix < 0 || prefix > 32) return null;
+  return { base, prefix };
+}
+
+function ipv4InPrefix(ip: string, networkBase: number, prefixLength: number): boolean {
+  const n = parseIpv4ToInt(ip);
+  if (n === null) return false;
+  const p = Math.max(0, Math.min(32, prefixLength));
+  const mask = p === 0 ? 0 : ((0xffffffff << (32 - p)) >>> 0) as number;
+  return ((n & mask) >>> 0) === (networkBase & mask);
+}
+
 function getLastOctet(ipAddress: string) {
   const parts = ipAddress.split(".");
   const last = Number(parts[parts.length - 1]);
   return Number.isFinite(last) ? last : -1;
 }
 
-function getSubnetKey(ipAddress: string) {
-  const parts = ipAddress.split(".");
-  return parts.length >= 3 ? `${parts[0]}.${parts[1]}.${parts[2]}` : ipAddress;
+/** Mesmo «site» L3 que a raiz, usando o prefixo mais curto dos dois (visão mais abrangente). */
+function sameL3SiteAsRoot(node: TopologyNodeData, root: TopologyNodeData): boolean {
+  const p = Math.min(nodeSubnetPrefix(node), nodeSubnetPrefix(root));
+  return getNetworkSegmentKey(node.ipAddress, p) === getNetworkSegmentKey(root.ipAddress, p);
+}
+
+function findGatewayForNode(
+  node: TopologyNodeData,
+  subnetGatewayBySegment: Map<string, TopologyNodeData>,
+): TopologyNodeData | undefined {
+  const exactKey = getNetworkSegmentKey(node.ipAddress, nodeSubnetPrefix(node));
+  const direct = subnetGatewayBySegment.get(exactKey);
+  if (direct) return direct;
+  let best: { prefix: number; gw: TopologyNodeData } | undefined;
+  for (const [seg, gw] of subnetGatewayBySegment) {
+    const parsed = parseSegmentKey(seg);
+    if (!parsed) continue;
+    if (!ipv4InPrefix(node.ipAddress, parsed.base, parsed.prefix)) continue;
+    if (!best || parsed.prefix > best.prefix) best = { prefix: parsed.prefix, gw: gw };
+  }
+  return best?.gw;
+}
+
+function findConcentratorsForNode(
+  node: TopologyNodeData,
+  concentratorsBySegment: Map<string, TopologyNodeData[]>,
+): TopologyNodeData[] {
+  const exactKey = getNetworkSegmentKey(node.ipAddress, nodeSubnetPrefix(node));
+  const fromExact = concentratorsBySegment.get(exactKey);
+  const merged = new Map<string, TopologyNodeData>();
+  if (fromExact) {
+    for (const c of fromExact) merged.set(c.id, c);
+  }
+  for (const [seg, list] of concentratorsBySegment) {
+    if (seg === exactKey) continue;
+    const parsed = parseSegmentKey(seg);
+    if (!parsed) continue;
+    if (!ipv4InPrefix(node.ipAddress, parsed.base, parsed.prefix)) continue;
+    for (const c of list) merged.set(c.id, c);
+  }
+  return Array.from(merged.values());
 }
 
 function isGatewayCandidate(node: TopologyNodeData) {
@@ -216,34 +319,37 @@ function buildHierarchicalGraph(
     }
   }
 
-  const subnetGatewayBySubnet = new Map<string, TopologyNodeData>();
-  const concentratorsBySubnet = new Map<string, TopologyNodeData[]>();
+  const subnetGatewayBySegment = new Map<string, TopologyNodeData>();
+  const concentratorsBySegment = new Map<string, TopologyNodeData[]>();
   for (const node of managedNodes) {
-    const subnet = getSubnetKey(node.ipAddress);
+    const segment = getNetworkSegmentKey(node.ipAddress, nodeSubnetPrefix(node));
     if (isGatewayCandidate(node)) {
-      const existing = subnetGatewayBySubnet.get(subnet);
+      const existing = subnetGatewayBySegment.get(segment);
       if (!existing || gatewayScore(node) > gatewayScore(existing)) {
-        subnetGatewayBySubnet.set(subnet, node);
+        subnetGatewayBySegment.set(segment, node);
       }
     }
     if (isConcentrator(node) && node.id !== rootGateway.id) {
-      const list = concentratorsBySubnet.get(subnet) ?? [];
+      const list = concentratorsBySegment.get(segment) ?? [];
       list.push(node);
-      concentratorsBySubnet.set(subnet, list);
+      concentratorsBySegment.set(segment, list);
     }
   }
 
   for (const node of managedNodes) {
     if (node.id === rootGateway.id || parentByNodeId.has(node.id)) continue;
-    const subnet = getSubnetKey(node.ipAddress);
-    const subnetGateway = subnetGatewayBySubnet.get(subnet);
+    const subnetGateway = findGatewayForNode(node, subnetGatewayBySegment);
     const subnetConcentrator =
-      (concentratorsBySubnet.get(subnet) ?? [])
+      findConcentratorsForNode(node, concentratorsBySegment)
         .filter((item) => item.id !== node.id)
         .sort((a, b) => b.degree - a.degree || a.name.localeCompare(b.name))[0] ?? null;
 
     let parentId = rootGateway.id;
-    if (subnet !== getSubnetKey(rootGateway.ipAddress) && subnetGateway && subnetGateway.id !== node.id) {
+    if (
+      !sameL3SiteAsRoot(node, rootGateway) &&
+      subnetGateway &&
+      subnetGateway.id !== node.id
+    ) {
       parentId = subnetGateway.id === rootGateway.id ? rootGateway.id : subnetGateway.id;
     } else if (isConcentrator(node) && subnetGateway && subnetGateway.id !== node.id) {
       parentId = subnetGateway.id;
@@ -433,10 +539,15 @@ function buildLinkLabel(link: TopologyEdgeData) {
 }
 
 function buildNodeLabel(node: TopologyNodeData) {
+  const seg =
+    node.subnetPrefixLength != null
+      ? `<div>Mapa L3: /${node.subnetPrefixLength} (${getNetworkSegmentKey(node.ipAddress, nodeSubnetPrefix(node))})</div>`
+      : "";
   return `
     <div style="padding:8px 10px; max-width: 320px;">
       <div><strong>${node.name}</strong></div>
       <div>IP: ${node.ipAddress}</div>
+      ${seg}
       <div>Status: ${node.status}</div>
       <div>Links: ${node.degree}</div>
       ${node.vendor ? `<div>Vendor: ${node.vendor}</div>` : ""}
@@ -497,6 +608,31 @@ function getNodeBoxMetrics(node: GraphNode, globalScale: number) {
   return { isCollector, label, ip, fontSize, width, height };
 }
 
+const TOPOLOGY_TOP_PANEL_STORAGE = "npm-enterprise.topology.topPanelPx";
+const TOP_PANEL_MIN = 132;
+const GRAPH_AREA_MIN = 200;
+const TOP_PANEL_DEFAULT = 300;
+const TOP_PANEL_CLICK_STEP = 56;
+
+function readStoredTopPanelPx(): number | null {
+  try {
+    const raw = sessionStorage.getItem(TOPOLOGY_TOP_PANEL_STORAGE);
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredTopPanelPx(px: number) {
+  try {
+    sessionStorage.setItem(TOPOLOGY_TOP_PANEL_STORAGE, String(px));
+  } catch {
+    /* ignore */
+  }
+}
+
 export default function Topology() {
   const graphRef = useRef<any>(undefined);
   const nodePositionsRef = useRef<Map<string, PersistedNodePos>>(new Map());
@@ -512,21 +648,101 @@ export default function Topology() {
     },
     refetchInterval: 15000,
   });
-  const [viewport, setViewport] = useState({
-    width: Math.max(window.innerWidth - 80, 800),
-    height: Math.max(window.innerHeight - 240, 620),
-  });
+  const pageRef = useRef<HTMLDivElement>(null);
+  const graphHostRef = useRef<HTMLDivElement>(null);
+  const topPanelDragRef = useRef<{ startY: number; startTop: number; parentH: number } | null>(null);
+  const topPanelPxRef = useRef(TOP_PANEL_DEFAULT);
+  const [viewport, setViewport] = useState({ width: 960, height: 640 });
   const [layoutResetKey, setLayoutResetKey] = useState(0);
+  const [topPanelPx, setTopPanelPx] = useState(() => readStoredTopPanelPx() ?? TOP_PANEL_DEFAULT);
+  const [immersiveMap, setImmersiveMap] = useState(false);
+
+  topPanelPxRef.current = topPanelPx;
+
+  const clampTopPanel = (px: number, parentHeight: number) => {
+    if (!Number.isFinite(parentHeight) || parentHeight < 120) return px;
+    const splitterAndGaps = 56;
+    const maxTop = Math.max(
+      TOP_PANEL_MIN,
+      parentHeight - GRAPH_AREA_MIN - splitterAndGaps,
+    );
+    return Math.min(maxTop, Math.max(TOP_PANEL_MIN, Math.round(px)));
+  };
 
   useEffect(() => {
-    const onResize = () =>
-      setViewport({
-        width: Math.max(window.innerWidth - 80, 800),
-        height: Math.max(window.innerHeight - 240, 620),
+    if (isLoading || immersiveMap) return;
+    const sync = () => {
+      const el = pageRef.current;
+      if (!el) return;
+      const h = el.getBoundingClientRect().height;
+      if (h < 80) return;
+      setTopPanelPx((t) => clampTopPanel(t, h));
+    };
+    sync();
+    const el = pageRef.current;
+    let ro: ResizeObserver | undefined;
+    if (el) {
+      ro = new ResizeObserver(() => {
+        requestAnimationFrame(sync);
       });
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
+      ro.observe(el);
+    }
+    window.addEventListener("resize", sync);
+    return () => {
+      window.removeEventListener("resize", sync);
+      ro?.disconnect();
+    };
+  }, [isLoading, immersiveMap]);
+
+  useEffect(() => {
+    const el = graphHostRef.current;
+    if (!el) return;
+    const apply = (w: number, h: number) => {
+      setViewport({
+        width: Math.max(280, Math.floor(w)),
+        height: Math.max(160, Math.floor(h)),
+      });
+    };
+    const ro = new ResizeObserver((entries) => {
+      const cr = entries[0]?.contentRect;
+      if (!cr) return;
+      apply(cr.width, cr.height);
+    });
+    ro.observe(el);
+    const id = requestAnimationFrame(() => {
+      apply(el.clientWidth, el.clientHeight);
+    });
+    return () => {
+      cancelAnimationFrame(id);
+      ro.disconnect();
+    };
+  }, [immersiveMap]);
+
+  useEffect(() => {
+    if (!immersiveMap) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        setImmersiveMap(false);
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [immersiveMap]);
+
+  useEffect(() => {
+    if (!immersiveMap) return;
+    const t = window.setTimeout(() => {
+      graphRef.current?.zoomToFit(520, 72);
+    }, 350);
+    return () => window.clearTimeout(t);
+  }, [immersiveMap, viewport.width, viewport.height]);
 
   const visualGraph = useMemo(() => {
     const built = buildHierarchicalGraph(topologyData, viewport);
@@ -572,73 +788,34 @@ export default function Topology() {
 
   if (isLoading) {
     return (
-      <div className="w-full h-[80vh] flex flex-col items-center justify-center space-y-4">
+      <div className="flex min-h-[min(60dvh,520px)] w-full flex-1 flex-col items-center justify-center space-y-4 py-12">
         <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
         <p className="text-muted-foreground font-mono">Descobrindo topologia e fluxos...</p>
       </div>
     );
   }
 
-  return (
-    <div className="space-y-4 h-[calc(100vh-8rem)] flex flex-col">
-      <div className="flex flex-wrap items-center justify-between gap-3 shrink-0">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight font-mono">Topology Map</h1>
-          <p className="text-muted-foreground text-sm">
-            Árvore inicial com raiz no gateway; arraste os nós livremente. Partículas nos links
-            indicam sentido e intensidade do fluxo.
-          </p>
-          <p className="text-muted-foreground text-xs mt-1">
-            Durante o arrasto o nó fixa-se à posição; clique direito num nó para o libertar e voltar
-            à simulação. Use «Repor layout» para recolocar a árvore.
-          </p>
-          <p className="text-muted-foreground text-xs">
-            Gateway raiz: <span className="font-mono text-foreground">{visualGraph.rootGateway?.name ?? "indefinido"}</span>
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3 text-xs">
-          <button
-            type="button"
-            className="rounded-md border border-border bg-secondary/60 px-3 py-1.5 font-medium text-foreground hover:bg-secondary"
-            onClick={() => {
-              nodePositionsRef.current.clear();
-              setLayoutResetKey((k) => k + 1);
-            }}
-          >
-            Repor layout
-          </button>
-          <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-success"></span><span>Online</span></div>
-          <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-warning"></span><span>Warning</span></div>
-          <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-destructive"></span><span>Offline</span></div>
-          <div className="flex items-center gap-2"><Activity className="h-3.5 w-3.5 text-primary" /><span>Particulas de trafego</span></div>
-          <div className="flex items-center gap-2"><GitBranch className="h-3.5 w-3.5 text-primary" /><span>Links de protocolo</span></div>
-          <div className="flex items-center gap-2"><Radar className="h-3.5 w-3.5 text-primary" /><span>Fluxos de coleta</span></div>
-        </div>
-      </div>
+  const nudgeTopPanel = (delta: number) => {
+    const el = pageRef.current;
+    if (!el) return;
+    const h = el.getBoundingClientRect().height;
+    setTopPanelPx((t) => {
+      const next = clampTopPanel(t + delta, h);
+      writeStoredTopPanelPx(next);
+      return next;
+    });
+  };
 
-      <div className="grid gap-3 md:grid-cols-3 shrink-0">
-        <Card className="glass-panel border-border/50">
-          <CardContent className="p-4">
-            <div className="text-xs uppercase tracking-wider text-muted-foreground">Links de protocolo</div>
-            <div className="mt-1 text-2xl font-mono">{protocolLinks}</div>
-          </CardContent>
-        </Card>
-        <Card className="glass-panel border-border/50">
-          <CardContent className="p-4">
-            <div className="text-xs uppercase tracking-wider text-muted-foreground">Fluxos de coleta</div>
-            <div className="mt-1 text-2xl font-mono">{telemetryLinks}</div>
-          </CardContent>
-        </Card>
-        <Card className="glass-panel border-border/50">
-          <CardContent className="p-4">
-            <div className="text-xs uppercase tracking-wider text-muted-foreground">Nos no mapa</div>
-            <div className="mt-1 text-2xl font-mono">{topologyData?.nodes.length ?? 0}</div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card className="flex-1 glass-panel border-border/50 overflow-hidden relative bg-[#08111f]">
-        <CardContent className="p-0 h-full">
+  const renderGraph = () => (
+    <div ref={graphHostRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <Card
+        className={`relative h-full min-h-[200px] overflow-hidden bg-[#08111f] ${
+          immersiveMap
+            ? "rounded-lg border border-white/10 shadow-2xl"
+            : "glass-panel border-border/50"
+        }`}
+      >
+        <CardContent className="h-full p-0">
           <ForceGraph2D
             key={`topo-fg-${layoutResetKey}`}
             ref={graphRef}
@@ -727,6 +904,231 @@ export default function Topology() {
           />
         </CardContent>
       </Card>
+    </div>
+  );
+
+  if (immersiveMap) {
+    return createPortal(
+      <div className="fixed inset-0 z-[400] flex flex-col bg-[#08111f]">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-[#0a1628] px-4 py-2.5">
+          <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-4">
+            <span className="truncate text-sm font-semibold text-foreground">Topology Map</span>
+            <span className="text-xs text-muted-foreground">
+              <kbd className="mr-1 rounded border border-white/20 bg-black/30 px-1.5 py-0.5 font-mono text-[10px]">
+                ESC
+              </kbd>
+              para voltar à vista normal
+            </span>
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="text-xs"
+              onClick={() => {
+                nodePositionsRef.current.clear();
+                setLayoutResetKey((k) => k + 1);
+              }}
+            >
+              Repor layout
+            </Button>
+            <Button type="button" variant="default" size="sm" onClick={() => setImmersiveMap(false)}>
+              <X className="mr-1 h-4 w-4" />
+              Fechar
+            </Button>
+          </div>
+        </div>
+        {renderGraph()}
+      </div>,
+      document.body,
+    );
+  }
+
+  return (
+    <div ref={pageRef} className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+      <div
+        className="flex min-h-0 shrink-0 flex-col gap-2 overflow-x-hidden overflow-y-auto"
+        style={{ height: topPanelPx, minHeight: TOP_PANEL_MIN }}
+      >
+        <div className="flex shrink-0 flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight font-mono">Topology Map</h1>
+            <p className="text-muted-foreground text-sm">
+              Árvore inicial com raiz no gateway; arraste os nós livremente. Partículas nos links
+              indicam sentido e intensidade do fluxo.
+            </p>
+            <p className="text-muted-foreground text-xs mt-1">
+              Durante o arrasto o nó fixa-se à posição; clique direito num nó para o libertar e voltar
+              à simulação. Use «Repor layout» para recolocar a árvore.
+            </p>
+            <p className="text-muted-foreground text-xs mt-1">
+              O agrupamento L3 segue o prefixo do scope de descoberta (ex.{" "}
+              <span className="font-mono">/16</span>, <span className="font-mono">/24</span>); scopes só por
+              intervalo IP assumem <span className="font-mono">/24</span>.
+            </p>
+            <p className="text-muted-foreground text-xs">
+              Gateway raiz:{" "}
+              <span className="font-mono text-foreground">{visualGraph.rootGateway?.name ?? "indefinido"}</span>
+            </p>
+            <p className="text-muted-foreground mt-1 text-[11px]">
+              Redimensione a área do mapa: setas (clique) ou barra central (arrastar). Ícone de ecrã inteiro
+              expande o mapa; use <kbd className="rounded border px-1 font-mono text-[10px]">ESC</kbd> para
+              sair. Duplo clique na barra repõe o tamanho por omissão.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            <button
+              type="button"
+              className="rounded-md border border-border bg-secondary/60 px-3 py-1.5 font-medium text-foreground hover:bg-secondary"
+              onClick={() => {
+                nodePositionsRef.current.clear();
+                setLayoutResetKey((k) => k + 1);
+              }}
+            >
+              Repor layout
+            </button>
+            <div className="flex items-center gap-2">
+              <span className="h-3 w-3 rounded-full bg-success"></span>
+              <span>Online</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="h-3 w-3 rounded-full bg-warning"></span>
+              <span>Warning</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="h-3 w-3 rounded-full bg-destructive"></span>
+              <span>Offline</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Activity className="h-3.5 w-3.5 text-primary" />
+              <span>Particulas de trafego</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <GitBranch className="h-3.5 w-3.5 text-primary" />
+              <span>Links de protocolo</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Radar className="h-3.5 w-3.5 text-primary" />
+              <span>Fluxos de coleta</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid shrink-0 grid-cols-1 gap-2 sm:grid-cols-3 sm:gap-3">
+          <Card className="glass-panel border-border/50">
+            <CardContent className="p-3 sm:p-4">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground sm:text-xs">
+                Links de protocolo
+              </div>
+              <div className="mt-0.5 font-mono text-xl sm:text-2xl">{protocolLinks}</div>
+            </CardContent>
+          </Card>
+          <Card className="glass-panel border-border/50">
+            <CardContent className="p-3 sm:p-4">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground sm:text-xs">
+                Fluxos de coleta
+              </div>
+              <div className="mt-0.5 font-mono text-xl sm:text-2xl">{telemetryLinks}</div>
+            </CardContent>
+          </Card>
+          <Card className="glass-panel border-border/50">
+            <CardContent className="p-3 sm:p-4">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground sm:text-xs">
+                Nos no mapa
+              </div>
+              <div className="mt-0.5 font-mono text-xl sm:text-2xl">{topologyData?.nodes.length ?? 0}</div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border/50 bg-secondary/25 px-1 py-0.5">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 shrink-0"
+          title="Mapa em ecrã inteiro (ESC para voltar)"
+          onClick={() => setImmersiveMap(true)}
+        >
+          <Maximize2 className="h-4 w-4" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 shrink-0"
+          title="Ampliar área do mapa (menos cabeçalho)"
+          onClick={() => nudgeTopPanel(-TOP_PANEL_CLICK_STEP)}
+        >
+          <ChevronUp className="h-4 w-4" />
+        </Button>
+        <div
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Arrastar para redimensionar área do mapa"
+          className="flex h-8 min-w-0 flex-1 cursor-row-resize touch-none items-center justify-center rounded-md border border-dashed border-border/60 bg-background/40 hover:bg-secondary/50"
+          onPointerDown={(e) => {
+            if (!pageRef.current || e.button !== 0) return;
+            e.preventDefault();
+            topPanelDragRef.current = {
+              startY: e.clientY,
+              startTop: topPanelPxRef.current,
+              parentH: pageRef.current.getBoundingClientRect().height,
+            };
+            (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+          }}
+          onPointerMove={(e) => {
+            const drag = topPanelDragRef.current;
+            if (!drag) return;
+            const dy = e.clientY - drag.startY;
+            const next = clampTopPanel(drag.startTop + dy, drag.parentH);
+            setTopPanelPx(next);
+          }}
+          onPointerUp={(e) => {
+            if (topPanelDragRef.current) {
+              writeStoredTopPanelPx(topPanelPxRef.current);
+            }
+            topPanelDragRef.current = null;
+            try {
+              (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+            } catch {
+              /* ignore */
+            }
+          }}
+          onPointerCancel={(e) => {
+            topPanelDragRef.current = null;
+            try {
+              (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+            } catch {
+              /* ignore */
+            }
+          }}
+          onDoubleClick={() => {
+            const el = pageRef.current;
+            if (!el) return;
+            const h = el.getBoundingClientRect().height;
+            const next = clampTopPanel(TOP_PANEL_DEFAULT, h);
+            setTopPanelPx(next);
+            writeStoredTopPanelPx(next);
+          }}
+        >
+          <GripHorizontal className="pointer-events-none h-4 w-4 text-muted-foreground" aria-hidden />
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 shrink-0"
+          title="Reduzir área do mapa (mais cabeçalho)"
+          onClick={() => nudgeTopPanel(TOP_PANEL_CLICK_STEP)}
+        >
+          <ChevronDown className="h-4 w-4" />
+        </Button>
+      </div>
+
+      {renderGraph()}
     </div>
   );
 }
